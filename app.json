@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Maneki",
+    "slug": "Maneki",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/juego1.jpg",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/juego1.jpg",
+      "resizeMode": "cover",
+      "backgroundColor": "#0F0F0F"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/juego1.jpg",
+        "backgroundColor": "#0F0F0F"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/juego1.jpg"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

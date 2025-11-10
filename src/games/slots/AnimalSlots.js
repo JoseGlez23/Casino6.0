@@ -1,5 +1,5 @@
 // src/games/slots/AnimalSlots.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -20,9 +20,10 @@ import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos para Animal Slots
+// Hook de sonidos para Animal Slots - CORREGIDO
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
+  const soundsRef = useRef({});
 
   const loadSounds = async () => {
     try {
@@ -35,7 +36,6 @@ const useGameSounds = () => {
       });
 
       const soundObjects = {};
-
       const soundTypes = [
         { key: "spin", file: require("../../assets/sounds/slots1.mp3") },
         { key: "win", file: require("../../assets/sounds/success.mp3") },
@@ -48,15 +48,15 @@ const useGameSounds = () => {
 
       for (const { key, file } of soundTypes) {
         try {
-          const soundObject = new Audio.Sound();
-          await soundObject.loadAsync(file);
-          soundObjects[key] = soundObject;
+          const { sound } = await Audio.Sound.createAsync(file);
+          soundObjects[key] = sound;
         } catch (error) {
           console.log(`Error cargando sonido ${key}:`, error);
         }
       }
 
       setSounds(soundObjects);
+      soundsRef.current = soundObjects;
     } catch (error) {
       console.log("Error inicializando sistema de sonido:", error);
     }
@@ -64,11 +64,25 @@ const useGameSounds = () => {
 
   const playSound = async (type) => {
     try {
-      if (sounds[type]) {
-        await sounds[type].replayAsync();
+      const sound = soundsRef.current[type];
+      if (sound) {
+        await sound.stopAsync();
+        await sound.playAsync();
       }
     } catch (error) {
       console.log(`Error reproduciendo sonido ${type}:`, error);
+    }
+  };
+
+  const stopAllSounds = async () => {
+    try {
+      for (const sound of Object.values(soundsRef.current)) {
+        if (sound) {
+          await sound.stopAsync();
+        }
+      }
+    } catch (error) {
+      console.log("Error stopping sounds:", error);
     }
   };
 
@@ -76,7 +90,7 @@ const useGameSounds = () => {
     loadSounds();
 
     return () => {
-      Object.values(sounds).forEach((sound) => {
+      Object.values(soundsRef.current).forEach((sound) => {
         if (sound) {
           sound.unloadAsync();
         }
@@ -84,7 +98,7 @@ const useGameSounds = () => {
     };
   }, []);
 
-  return playSound;
+  return { playSound, stopAllSounds };
 };
 
 // Componente de animación de victoria
@@ -92,6 +106,7 @@ const WinAnimation = ({ show, amount, isJackpot = false }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [rotateAnim] = useState(new Animated.Value(0));
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (show) {
@@ -106,6 +121,11 @@ const WinAnimation = ({ show, amount, isJackpot = false }) => {
           toValue: 1,
           duration: 1000,
           easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300,
           useNativeDriver: true,
         }),
       ]).start();
@@ -128,6 +148,7 @@ const WinAnimation = ({ show, amount, isJackpot = false }) => {
       scaleAnim.setValue(0);
       rotateAnim.setValue(0);
       pulseAnim.setValue(1);
+      fadeAnim.setValue(0);
     }
   }, [show]);
 
@@ -145,10 +166,13 @@ const WinAnimation = ({ show, amount, isJackpot = false }) => {
         styles.winAnimation,
         {
           transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
+          opacity: fadeAnim,
         },
       ]}
     >
-      <Ionicons name="trophy" size={80} color="#FFD700" />
+      <Animated.View style={{ transform: [{ rotate: rotateInterpolation }] }}>
+        <Ionicons name="trophy" size={80} color="#FFD700" />
+      </Animated.View>
       <Text style={styles.winAnimationText}>
         {isJackpot ? "¡JACKPOT!" : "¡GANASTE!"}
       </Text>
@@ -163,16 +187,24 @@ const WinAnimation = ({ show, amount, isJackpot = false }) => {
 const LoseAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [shakeAnim] = useState(new Animated.Value(0));
+  const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (show) {
       Animated.sequence([
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          tension: 100,
-          friction: 8,
-          useNativeDriver: true,
-        }),
+        Animated.parallel([
+          Animated.spring(scaleAnim, {
+            toValue: 1,
+            tension: 100,
+            friction: 8,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]),
         Animated.timing(shakeAnim, {
           toValue: 1,
           duration: 500,
@@ -182,6 +214,7 @@ const LoseAnimation = ({ show }) => {
     } else {
       scaleAnim.setValue(0);
       shakeAnim.setValue(0);
+      fadeAnim.setValue(0);
     }
   }, [show]);
 
@@ -199,6 +232,7 @@ const LoseAnimation = ({ show }) => {
         styles.loseAnimation,
         {
           transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
+          opacity: fadeAnim,
         },
       ]}
     >
@@ -208,7 +242,7 @@ const LoseAnimation = ({ show }) => {
   );
 };
 
-// Símbolos del juego con las imágenes que tienes
+// Símbolos del juego
 const symbols = [
   {
     id: "lion",
@@ -248,7 +282,7 @@ const symbols = [
   },
 ];
 
-// LÓGICA REAL DE TRAGAMONEDAS
+// LÓGICA DE TRAGAMONEDAS
 const calculateWin = (reels, betAmount) => {
   const lines = [
     [0, 1, 2], // Línea central
@@ -259,13 +293,11 @@ const calculateWin = (reels, betAmount) => {
   let totalTickets = 0;
   let winningLines = [];
 
-  // Verificar cada línea de pago
   lines.forEach((line, lineIndex) => {
     const symbolsInLine = line.map(
       (reelIndex, position) => reels[position][reelIndex]
     );
 
-    // Verificar si todos los símbolos son iguales
     const firstSymbol = symbolsInLine[0];
     const allSame = symbolsInLine.every(
       (symbol) => symbol.id === firstSymbol.id
@@ -289,44 +321,132 @@ const calculateWin = (reels, betAmount) => {
   };
 };
 
+// Componente de carrete CORREGIDO - CAÍDA RÁPIDA QUE DISMINUYE
+const Reel = ({ symbols, reelIndex, isSpinning, winningLines, onReelStop }) => {
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const [currentPosition, setCurrentPosition] = useState(0);
+
+  useEffect(() => {
+    if (isSpinning) {
+      startSpinning();
+    } else {
+      // Reset cuando no está girando
+      spinAnim.setValue(0);
+    }
+  }, [isSpinning]);
+
+  const startSpinning = () => {
+    // Reiniciar animación
+    spinAnim.setValue(0);
+
+    // ANIMACIÓN MEJORADA: Caída rápida que va disminuyendo
+    Animated.timing(spinAnim, {
+      toValue: 1,
+      duration: 1200 + reelIndex * 400, // Cada carrete para en momentos diferentes
+      easing: Easing.out(Easing.cubic), // Esto crea el efecto de desaceleración
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished && onReelStop) {
+        onReelStop(reelIndex);
+      }
+    });
+  };
+
+  // INTERPOLACIÓN MEJORADA - Caída rápida que se desacelera
+  const translateYInterpolation = spinAnim.interpolate({
+    inputRange: [0, 0.3, 0.7, 1], // Puntos clave para controlar la velocidad
+    outputRange: [-400, -100, -20, 0], // Comienza rápido y se desacelera
+  });
+
+  // Efecto de blur durante el giro
+  const opacityInterpolation = spinAnim.interpolate({
+    inputRange: [0, 0.2, 0.8, 1],
+    outputRange: [0.8, 0.6, 0.6, 1],
+  });
+
+  return (
+    <View style={styles.reelColumn}>
+      <Animated.View
+        style={[
+          styles.reelContainer,
+          {
+            transform: [{ translateY: translateYInterpolation }],
+            opacity: opacityInterpolation,
+          },
+        ]}
+      >
+        {/* Renderizar más símbolos para efecto de scroll continuo */}
+        {[...symbols, ...symbols].map((symbol, symbolIndex) => {
+          const actualSymbolIndex = symbolIndex % symbols.length;
+          const actualSymbol = symbols[actualSymbolIndex];
+          const isWinningSymbol = winningLines.some((winLine) => {
+            const linePositions = [
+              [0, 0, 0], // superior
+              [0, 1, 2], // central
+              [2, 2, 2], // inferior
+            ];
+            return linePositions[winLine.line][reelIndex] === actualSymbolIndex;
+          });
+
+          return (
+            <View
+              key={symbolIndex}
+              style={[
+                styles.symbolSlot,
+                isWinningSymbol && styles.winningSymbol,
+                isSpinning && styles.spinningSymbol,
+              ]}
+            >
+              <Image source={actualSymbol.image} style={styles.symbolImage} />
+              {isWinningSymbol && <View style={styles.winningGlow} />}
+            </View>
+          );
+        })}
+      </Animated.View>
+      <View style={styles.reelFrame} />
+    </View>
+  );
+};
+
 export default function AnimalSlots({ navigation }) {
   const { manekiCoins, tickets, addTickets, subtractCoins, canAfford } =
     useCoins();
-  const playSound = useGameSounds();
+  const { playSound, stopAllSounds } = useGameSounds();
 
-  // Estado para 3 carretes con 3 símbolos visibles cada uno
+  // Estado del juego
   const [reels, setReels] = useState([
-    [symbols[0], symbols[1], symbols[2]], // Carrete 1
-    [symbols[1], symbols[2], symbols[3]], // Carrete 2
-    [symbols[2], symbols[3], symbols[4]], // Carrete 3
+    [symbols[0], symbols[1], symbols[2]],
+    [symbols[1], symbols[2], symbols[3]],
+    [symbols[2], symbols[3], symbols[4]],
   ]);
 
   const [spinning, setSpinning] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
   const [bet, setBet] = useState(50);
   const [lastWin, setLastWin] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [winningLines, setWinningLines] = useState([]);
-
-  // Animaciones para cada carrete
-  const [reelAnimations] = useState([
-    new Animated.Value(0),
-    new Animated.Value(0),
-    new Animated.Value(0),
-  ]);
+  const [stoppedReels, setStoppedReels] = useState(0);
 
   const betAmounts = [25, 50, 100, 250];
   const [pulseAnim] = useState(new Animated.Value(1));
+  const cooldownRef = useRef(false);
 
+  // Efecto para inicializar audio
   useEffect(() => {
     const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch (error) {
+        console.log("Error inicializando audio:", error);
+      }
     };
     initializeAudio();
   }, []);
@@ -356,46 +476,53 @@ export default function AnimalSlots({ navigation }) {
     setTimeout(() => setShowLoseAnimation(false), 2000);
   };
 
+  const startCooldown = () => {
+    setCooldown(true);
+    cooldownRef.current = true;
+
+    setTimeout(() => {
+      setCooldown(false);
+      cooldownRef.current = false;
+    }, 2000);
+  };
+
+  const handleReelStop = async (reelIndex) => {
+    setStoppedReels((prev) => prev + 1);
+
+    // Reproducir sonido de parada para cada carrete
+    if (reelIndex < 2) {
+      await playSound("reelStop");
+    }
+  };
+
   const spinReels = async () => {
-    if (spinning || !canAfford(bet)) {
+    if (spinning || !canAfford(bet) || cooldownRef.current) {
       if (!canAfford(bet)) {
         await playSound("error");
         Alert.alert(
           "Fondos Insuficientes",
           "No tienes suficientes Maneki Coins para esta apuesta"
         );
+      } else if (cooldownRef.current) {
+        await playSound("error");
       }
       return;
     }
 
+    // INICIAR SPIN
     setSpinning(true);
+    setCooldown(true);
+    setStoppedReels(0);
     subtractCoins(bet, `Apuesta en Animal Slots`);
     setLastWin(0);
     setWinningLines([]);
 
+    // SONIDOS INICIALES
     await playSound("click");
-    await playSound("spin"); // Sonido de giro continuo
+    await playSound("spin");
     pulseAnimation();
 
-    // Animación de giro de los carretes - EFECTO REAL DE TRAGAMONEDAS
-    reelAnimations.forEach((anim, index) => {
-      anim.setValue(0);
-
-      // Efecto de giro rápido al inicio
-      Animated.timing(anim, {
-        toValue: 1,
-        duration: 1000 + index * 400, // Cada carrete para en momentos diferentes
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-
-      // Sonido cuando para cada carrete
-      setTimeout(async () => {
-        await playSound("reelStop");
-      }, 800 + index * 400);
-    });
-
-    // Generar nuevos resultados después de la animación
+    // Generar nuevos resultados después de un delay
     setTimeout(async () => {
       const newReels = [
         [
@@ -417,17 +544,14 @@ export default function AnimalSlots({ navigation }) {
 
       setReels(newReels);
 
-      // Calcular ganancias con la nueva lógica
+      // Calcular ganancias
       const winResult = calculateWin(newReels, bet);
 
       if (winResult.hasWin) {
         setLastWin(winResult.tickets);
         setWinningLines(winResult.winningLines);
+        addTickets(winResult.tickets, `Ganancia en Animal Slots`);
 
-        // Agregar tickets ganados
-        await addTickets(winResult.tickets, `Ganancia en Animal Slots`);
-
-        // Verificar si es jackpot (3 tigres en línea central)
         const isJackpot = winResult.winningLines.some(
           (line) => line.symbol.id === "tiger" && line.line === 0
         );
@@ -447,55 +571,26 @@ export default function AnimalSlots({ navigation }) {
         Vibration.vibrate(200);
       }
 
-      setSpinning(false);
-    }, 2000);
+      // FINALIZAR SPIN Y INICIAR COOLDOWN
+      setTimeout(() => {
+        setSpinning(false);
+        startCooldown();
+      }, 1000);
+    }, 1800); // Tiempo ajustado para la nueva animación
   };
 
-  const renderReel = (reelSymbols, reelIndex) => {
-    const reelAnimation = {
-      transform: [
-        {
-          translateY: reelAnimations[reelIndex].interpolate({
-            inputRange: [0, 1],
-            outputRange: [-200, 0],
-          }),
-        },
-      ],
-    };
+  const renderReel = (reelSymbols, reelIndex) => (
+    <Reel
+      key={reelIndex}
+      symbols={reelSymbols}
+      reelIndex={reelIndex}
+      isSpinning={spinning}
+      winningLines={winningLines}
+      onReelStop={handleReelStop}
+    />
+  );
 
-    return (
-      <View key={reelIndex} style={styles.reelColumn}>
-        <Animated.View style={[styles.reelContainer, reelAnimation]}>
-          {reelSymbols.map((symbol, symbolIndex) => {
-            // Verificar si este símbolo está en una línea ganadora
-            const isWinningSymbol = winningLines.some((winLine) => {
-              const linePositions = [
-                [0, 0, 0],
-                [0, 1, 2],
-                [2, 2, 2],
-              ]; // superior, central, inferior
-              return linePositions[winLine.line][reelIndex] === symbolIndex;
-            });
-
-            return (
-              <View
-                key={symbolIndex}
-                style={[
-                  styles.symbolSlot,
-                  isWinningSymbol && styles.winningSymbol,
-                ]}
-              >
-                <Image source={symbol.image} style={styles.symbolImage} />
-              </View>
-            );
-          })}
-        </Animated.View>
-
-        {/* Marco del carrete */}
-        <View style={styles.reelFrame} />
-      </View>
-    );
-  };
+  const canSpin = !spinning && !cooldown && canAfford(bet);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -503,9 +598,8 @@ export default function AnimalSlots({ navigation }) {
       <WinAnimation
         show={showWinAnimation}
         amount={lastWin}
-        isJackpot={lastWin >= bet * 15} // Jackpot si gana 15x o más
+        isJackpot={lastWin >= bet * 15}
       />
-
       <LoseAnimation show={showLoseAnimation} />
 
       <ScrollView
@@ -513,7 +607,7 @@ export default function AnimalSlots({ navigation }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header simplificado */}
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.balances}>
             <View style={styles.balanceItem}>
@@ -543,14 +637,13 @@ export default function AnimalSlots({ navigation }) {
           <View style={styles.emptySpace} />
         </View>
 
-        {/* Área de la tragamonedas - DISEÑO REAL */}
+        {/* Máquina tragamonedas */}
         <View style={styles.slotsMachine}>
-          {/* Panel superior */}
           <View style={styles.machineHeader}>
             <Text style={styles.machineTitle}>SAFARI SLOTS</Text>
           </View>
 
-          {/* Área de carretes */}
+          {/* Área de carretes - CON ANIMACIÓN DE CAÍDA MEJORADA */}
           <View style={styles.reelsArea}>
             <View style={styles.reelsRow}>
               {reels.map((reelSymbols, index) =>
@@ -563,7 +656,6 @@ export default function AnimalSlots({ navigation }) {
             <View style={[styles.payline, styles.paylineMiddle]} />
             <View style={[styles.payline, styles.paylineBottom]} />
 
-            {/* Marco de la ventana */}
             <View style={styles.windowFrame} />
           </View>
 
@@ -576,16 +668,16 @@ export default function AnimalSlots({ navigation }) {
             <View style={styles.infoItem}>
               <Text style={styles.infoLabel}>PREMIO</Text>
               <Text style={styles.infoValue}>
-                {lastWin > 0 ? `${lastWin} TICKETS` : "---"}
+                {lastWin > 0 ? `${lastWin} T` : "---"}
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Selector de apuesta - ABAJO DEL SLOT */}
+        {/* Selector de apuesta - CORREGIDO PARA NO SALIRSE */}
         <View style={styles.betSection}>
           <Text style={styles.betTitle}>SELECCIONAR APUESTA</Text>
-          <View style={styles.betAmounts}>
+          <View style={styles.betAmountsContainer}>
             {betAmounts.map((amount) => (
               <TouchableOpacity
                 key={amount}
@@ -593,17 +685,17 @@ export default function AnimalSlots({ navigation }) {
                   styles.betButton,
                   !canAfford(amount) && styles.disabledButton,
                   bet === amount && styles.selectedBet,
+                  cooldown && styles.cooldownButton,
                 ]}
                 onPress={async () => {
-                  if (canAfford(amount)) {
+                  if (canAfford(amount) && !cooldown) {
                     setBet(amount);
                     await playSound("click");
-                    pulseAnimation();
                   } else {
                     await playSound("error");
                   }
                 }}
-                disabled={!canAfford(amount)}
+                disabled={!canAfford(amount) || cooldown}
               >
                 <Text style={styles.betButtonText}>{amount}</Text>
                 <Text style={styles.betButtonSubtext}>MC</Text>
@@ -614,57 +706,44 @@ export default function AnimalSlots({ navigation }) {
 
         {/* Botón de giro principal */}
         <TouchableOpacity
-          style={[
-            styles.spinButton,
-            (spinning || !canAfford(bet)) && styles.spinButtonDisabled,
-          ]}
+          style={[styles.spinButton, !canSpin && styles.spinButtonDisabled]}
           onPress={spinReels}
-          disabled={spinning || !canAfford(bet)}
+          disabled={!canSpin}
         >
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
             <Ionicons
-              name={spinning ? "sync" : "play"}
+              name={spinning ? "sync" : cooldown ? "timer" : "play"}
               size={28}
               color="#FFF"
             />
             <Text style={styles.spinButtonText}>
-              {spinning ? "GIRANDO..." : "JUGAR"}
+              {spinning ? "GIRANDO..." : cooldown ? "PREPARANDO..." : "JUGAR"}
             </Text>
           </Animated.View>
         </TouchableOpacity>
+
+        {/* Indicador de cooldown */}
+        {cooldown && (
+          <View style={styles.cooldownIndicator}>
+            <Ionicons name="timer" size={16} color="#FF9800" />
+            <Text style={styles.cooldownText}>
+              Preparando siguiente tirada...
+            </Text>
+          </View>
+        )}
 
         {/* Tabla de pagos */}
         <View style={styles.payoutInfo}>
           <Text style={styles.payoutTitle}>TABLA DE PAGOS</Text>
           <View style={styles.payoutGrid}>
-            <View style={styles.payoutItem}>
-              <Image
-                source={require("../../assets/tiger.png")}
-                style={styles.payoutImage}
-              />
-              <Text style={styles.payoutMultiplier}>x15</Text>
-            </View>
-            <View style={styles.payoutItem}>
-              <Image
-                source={require("../../assets/lion.png")}
-                style={styles.payoutImage}
-              />
-              <Text style={styles.payoutMultiplier}>x10</Text>
-            </View>
-            <View style={styles.payoutItem}>
-              <Image
-                source={require("../../assets/panda.png")}
-                style={styles.payoutImage}
-              />
-              <Text style={styles.payoutMultiplier}>x7</Text>
-            </View>
-            <View style={styles.payoutItem}>
-              <Image
-                source={require("../../assets/elephant.png")}
-                style={styles.payoutImage}
-              />
-              <Text style={styles.payoutMultiplier}>x5</Text>
-            </View>
+            {symbols.map((symbol) => (
+              <View key={symbol.id} style={styles.payoutItem}>
+                <Image source={symbol.image} style={styles.payoutImage} />
+                <Text style={styles.payoutMultiplier}>
+                  x{symbol.multiplier}
+                </Text>
+              </View>
+            ))}
           </View>
           <Text style={styles.payoutNote}>
             3 símbolos iguales en línea de pago
@@ -747,11 +826,6 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderColor: "#FF9800",
     overflow: "hidden",
-    elevation: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
   },
   machineHeader: {
     backgroundColor: "#FF9800",
@@ -768,27 +842,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#1A202C",
     padding: 15,
     position: "relative",
-    height: 200,
+    height: 220, // Un poco más alto para la animación
+    overflow: "hidden",
   },
   reelsRow: {
     flexDirection: "row",
     justifyContent: "center",
     gap: 5,
-    height: 150,
+    height: 170,
     overflow: "hidden",
   },
   reelColumn: {
     flex: 1,
     alignItems: "center",
     position: "relative",
+    height: 170,
+    overflow: "hidden",
   },
   reelContainer: {
     alignItems: "center",
     width: "100%",
+    height: 340, // Doble altura para el efecto de scroll
   },
   symbolSlot: {
     width: 80,
-    height: 50,
+    height: 55,
     backgroundColor: "#2D3748",
     marginVertical: 2,
     borderRadius: 8,
@@ -796,10 +874,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#4A5568",
+    position: "relative",
+  },
+  spinningSymbol: {
+    opacity: 0.9,
   },
   winningSymbol: {
     backgroundColor: "rgba(255, 215, 0, 0.2)",
     borderColor: "#FFD700",
+  },
+  winningGlow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255, 215, 0, 0.3)",
+    borderRadius: 8,
   },
   symbolImage: {
     width: 35,
@@ -868,7 +959,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 2,
   },
-  // Sección de apuesta
+  // Sección de apuesta - CORREGIDA
   betSection: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
     borderRadius: 12,
@@ -876,6 +967,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#333",
+    width: "100%",
+    alignSelf: "center",
   },
   betTitle: {
     color: "#FFF",
@@ -885,20 +978,23 @@ const styles = StyleSheet.create({
     textAlign: "center",
     letterSpacing: 1,
   },
-  betAmounts: {
+  betAmountsContainer: {
     flexDirection: "row",
-    justifyContent: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: 8,
   },
   betButton: {
     backgroundColor: "#2A2A2A",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#444",
     minWidth: 70,
+    flex: 1,
+    marginHorizontal: 2,
   },
   selectedBet: {
     borderColor: "#FF9800",
@@ -923,12 +1019,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#E65100",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    marginBottom: 20,
+    marginBottom: 16,
+    width: "100%",
+    alignSelf: "center",
   },
   spinButtonDisabled: {
     backgroundColor: "#666",
@@ -941,6 +1034,29 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginTop: 4,
   },
+  // Cooldown
+  cooldownIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.3)",
+    marginBottom: 20,
+    width: "100%",
+    alignSelf: "center",
+  },
+  cooldownText: {
+    color: "#F59E0B",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  cooldownButton: {
+    opacity: 0.6,
+  },
   // Tabla de pagos
   payoutInfo: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
@@ -949,6 +1065,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#333",
+    width: "100%",
+    alignSelf: "center",
   },
   payoutTitle: {
     color: "#FF9800",
@@ -961,7 +1079,9 @@ const styles = StyleSheet.create({
   payoutGrid: {
     flexDirection: "row",
     justifyContent: "space-between",
+    flexWrap: "wrap",
     marginBottom: 8,
+    gap: 8,
   },
   payoutItem: {
     alignItems: "center",
@@ -971,6 +1091,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#444",
     minWidth: 70,
+    flex: 1,
+    marginHorizontal: 2,
   },
   payoutImage: {
     width: 30,
@@ -997,7 +1119,7 @@ const styles = StyleSheet.create({
     borderColor: "#333",
     opacity: 0.5,
   },
-  // Estilos para animaciones
+  // Animaciones
   animationContainer: {
     position: "absolute",
     top: "50%",

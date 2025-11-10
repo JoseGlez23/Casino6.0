@@ -14,6 +14,7 @@ import SlotsScreen from "../screens/SlotsScreen";
 import TransferScreen from "../screens/TransferScreen";
 import SupportScreen from "../screens/SupportScreen";
 import IdentityVerificationScreen from "../screens/IdentityVerificationScreen";
+import TicketsScreen from "../screens/TicketsScreen";
 
 // Pantallas de Perfil
 import ProfileScreen from "../screens/ProfileScreen";
@@ -377,6 +378,11 @@ export default function AppNavigator() {
 
         <Stack.Screen name="Transferir" component={TransferScreen} options={{ 
         title: "Recargar Fichas", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700" 
+      }} />
+      <Stack.Screen name="Tickets" component={TicketsScreen} options={{ 
+        title: "Intercambiar Tickets", 
         headerStyle: { backgroundColor: "#1a1a1a" }, 
         headerTintColor: "#FFD700" 
       }} />

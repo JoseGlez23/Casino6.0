@@ -74,16 +74,16 @@ export default function ProfileScreen({ navigation }) {
         // Si hay error, intentar obtener datos básicos del usuario de auth
         if (authUser?.user) {
           setUserProfile({
-            nombre_completo: authUser.user.user_metadata?.full_name || "Usuario",
+            nombre_completo:
+              authUser.user.user_metadata?.full_name || "Usuario",
             casino_id: authUser.user.id.slice(0, 8),
             email: authUser.user.email,
-            fecha_creacion: authUser.user.created_at
+            fecha_creacion: authUser.user.created_at,
           });
         }
       } else {
         setUserProfile(data);
       }
-
     } catch (error) {
       console.error("Error cargando perfil:", error);
     } finally {
@@ -94,10 +94,10 @@ export default function ProfileScreen({ navigation }) {
   // Función para formatear la fecha
   const formatMemberSince = () => {
     if (!userProfile) return "Fecha no disponible";
-    
+
     // Intentar diferentes formatos de fecha
     let fecha;
-    
+
     if (userProfile.fecha_creacion) {
       fecha = new Date(userProfile.fecha_creacion);
     } else if (userProfile.created_at) {
@@ -111,10 +111,10 @@ export default function ProfileScreen({ navigation }) {
       return "Fecha no disponible";
     }
 
-    return fecha.toLocaleDateString('es-ES', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+    return fecha.toLocaleDateString("es-ES", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
     });
   };
 
@@ -201,10 +201,12 @@ export default function ProfileScreen({ navigation }) {
   };
 
   // ❌ QUITADO: "Recargar Fichas" del menú
+  // ✅ AGREGADO: "Soporte" entre "Bono Diario" y "Cerrar Sesión"
   const menuOptions = [
     { icon: "person", title: "Editar Perfil", screen: "EditProfile" },
     { icon: "wallet", title: "Mi Cartera", screen: "Wallet" },
     { icon: "gift", title: "Bono Diario", screen: "DailyBonus" },
+    { icon: "help-circle", title: "Soporte", screen: "Support" }, // ✅ NUEVA OPCIÓN AGREGADA
     { icon: "log-out", title: "Cerrar Sesión", screen: "Logout" },
   ];
 
@@ -227,6 +229,9 @@ export default function ProfileScreen({ navigation }) {
         break;
       case "EditProfile":
         navigation.navigate("EditProfile");
+        break;
+      case "Support": // ✅ NUEVO CASO PARA SOPORTE
+        navigation.navigate("Soporte");
         break;
       default:
         showCustomAlert(
@@ -268,12 +273,14 @@ export default function ProfileScreen({ navigation }) {
 
           <Text style={styles.userName}>{userName}</Text>
 
-          {/* ID COPIABLE - MEJORADO ESPACIADO */}
+          {/* ID COPIABLE - MEJORADO PARA UNA SOLA FILA */}
           <TouchableOpacity
             style={styles.idContainer}
             onPress={() => copyToClipboard(casinoID)}
           >
-            <Text style={styles.idText}>ID: {casinoID}</Text>
+            <Text style={styles.idText} numberOfLines={1} ellipsizeMode="tail">
+              ID: {casinoID}
+            </Text>
             <Ionicons
               name="copy-outline"
               size={16}
@@ -386,7 +393,7 @@ export default function ProfileScreen({ navigation }) {
           ))}
         </View>
 
-        {/* MENÚ - SIN "RECARGAR FICHAS" */}
+        {/* MENÚ - CON NUEVA OPCIÓN DE SOPORTE */}
         <View style={styles.menuSection}>
           {menuOptions.map((item, i) => (
             <TouchableOpacity
@@ -399,18 +406,28 @@ export default function ProfileScreen({ navigation }) {
                   style={[
                     styles.menuIconContainer,
                     item.screen === "DailyBonus" && styles.bonusIconContainer,
+                    item.screen === "Support" && styles.supportIconContainer, // ✅ NUEVO ESTILO PARA SOPORTE
                   ]}
                 >
                   <Ionicons
                     name={item.icon}
                     size={22}
-                    color={item.screen === "DailyBonus" ? "#000" : "#FFD700"}
+                    color={
+                      item.screen === "DailyBonus"
+                        ? "#000"
+                        : item.screen === "Support"
+                        ? "#000"
+                        : "#FFD700" // ✅ COLOR PARA SOPORTE
+                    }
                   />
                 </View>
                 <View style={styles.menuTextContainer}>
                   <Text style={styles.menuText}>{item.title}</Text>
                   {item.screen === "DailyBonus" && (
                     <Text style={styles.menuSubtext}>+1,000 MC gratis</Text>
+                  )}
+                  {item.screen === "Support" && ( // ✅ NUEVO SUBTEXTO PARA SOPORTE
+                    <Text style={styles.menuSubtext}>Ayuda y asistencia</Text>
                   )}
                 </View>
               </View>
@@ -561,27 +578,30 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 8,
     textAlign: "center",
-    width: "100%", // ✅ MEJOR ESPACIADO
+    width: "100%",
   },
   idContainer: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center", // ✅ CENTRADO
+    justifyContent: "space-between", // ✅ CAMBIADO PARA MEJOR DISTRIBUCIÓN
     marginBottom: 8,
-    paddingHorizontal: 15, // ✅ MÁS ESPACIO
-    paddingVertical: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 10, // ✅ AUMENTADO PADDING VERTICAL
     backgroundColor: "#8B0000",
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#FFD700",
-    minWidth: 120, // ✅ ANCHO MÍNIMO
+    width: "90%", // ✅ ANCHO CONTROLADO
+    minHeight: 44, // ✅ ALTURA MÍNIMA PARA MEJOR TACTO
   },
   idText: {
     color: "#FFD700",
     fontSize: 16,
     fontWeight: "600",
+    flex: 1, // ✅ OCUPA TODO EL ESPACIO DISPONIBLE
+    marginRight: 8, // ✅ ESPACIO ENTRE TEXTO E ICONO
     textAlign: "center",
-    flex: 1, // ✅ MEJOR DISTRIBUCIÓN
+    includeFontPadding: false, // ✅ EVITA PADDING EXTRA
   },
   userEmail: {
     color: "#fff",
@@ -589,21 +609,21 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     textAlign: "center",
     marginBottom: 12,
-    width: "100%", // ✅ MEJOR ESPACIADO
+    width: "100%",
   },
   copyIcon: {
-    marginLeft: 8,
+    // ✅ EL ICONO SE MANTIENE A LA DERECHA
   },
   verificationStatus: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center", // ✅ CENTRADO
+    justifyContent: "center",
     backgroundColor: "#8B0000",
-    paddingHorizontal: 20, // ✅ MÁS ESPACIO
+    paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,
     marginBottom: 15,
-    width: "80%", // ✅ ANCHO CONTROLADO
+    width: "80%",
   },
   statusText: {
     fontSize: 14,
@@ -644,7 +664,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#FFD700",
-    paddingVertical: 12, // ✅ MÁS ESPACIO
+    paddingVertical: 12,
     paddingHorizontal: 15,
     borderRadius: 25,
     gap: 5,
@@ -672,7 +692,7 @@ const styles = StyleSheet.create({
     color: "#FFD700",
     fontSize: 18,
     fontWeight: "bold",
-    flex: 1, // ✅ MEJOR ESPACIADO
+    flex: 1,
   },
   progressText: {
     color: "#FFD700",
@@ -774,8 +794,12 @@ const styles = StyleSheet.create({
   bonusIconContainer: {
     backgroundColor: "#FFD700",
   },
+  supportIconContainer: {
+    // ✅ NUEVO ESTILO PARA ICONO DE SOPORTE
+    backgroundColor: "#4169E1", // Azul real para soporte
+  },
   menuTextContainer: {
-    flex: 1, // ✅ MEJOR ESPACIADO PARA TEXTO
+    flex: 1,
   },
   menuText: {
     color: "#fff",
@@ -805,7 +829,7 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontSize: 14,
     opacity: 0.9,
-    flex: 1, // ✅ MEJOR ESPACIADO
+    flex: 1,
   },
   modalOverlay: {
     flex: 1,

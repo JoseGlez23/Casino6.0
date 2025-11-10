@@ -1,227 +1,1204 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import * as Animatable from 'react-native-animatable';
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+  Easing,
+  Dimensions,
+  ScrollView,
+  SafeAreaView,
+  Vibration,
+  Alert,
+  Image,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useCoins } from "../../context/CoinsContext";
+import { Audio } from "expo-av";
 
-const symbols = ["7️⃣", "🍀", "💰", "🎯", "⭐", "🔔", "🎰", "💫"];
+const { width, height } = Dimensions.get("window");
 
-export default function LuckySevenSlots() {
-  const [reels, setReels] = useState(["7️⃣", "7️⃣", "7️⃣"]);
-  const [spinning, setSpinning] = useState(false);
-  const [balance, setBalance] = useState(1000);
-  const [bet, setBet] = useState(10);
-  const [lastWin, setLastWin] = useState(0);
-  const [jackpot, setJackpot] = useState(5000);
+// Hook de sonidos para Lucky Seven Slots
+const useGameSounds = () => {
+  const [sounds, setSounds] = useState({});
+  const soundsRef = useRef({});
 
-  const spin = async () => {
-    if (spinning || balance < bet) return;
-    
-    setSpinning(true);
-    setBalance(prev => prev - bet);
-    setLastWin(0);
+  const loadSounds = async () => {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
 
-    // Contribución al jackpot
-    setJackpot(prev => prev + bet * 0.1);
-
-    // Animación de giro
-    for (let i = 0; i < 4; i++) {
-      setTimeout(() => {
-        setReels(prev => prev.map(() => symbols[Math.floor(Math.random() * symbols.length)]));
-      }, 400 * i);
-    }
-
-    // Resultado final
-    setTimeout(() => {
-      const newReels = [
-        symbols[Math.floor(Math.random() * symbols.length)],
-        symbols[Math.floor(Math.random() * symbols.length)],
-        symbols[Math.floor(Math.random() * symbols.length)]
+      const soundObjects = {};
+      const soundTypes = [
+        { key: "spin", file: require("../../assets/sounds/slots1.mp3") },
+        { key: "win", file: require("../../assets/sounds/success.mp3") },
+        { key: "jackpot", file: require("../../assets/sounds/slots2.mp3") },
+        { key: "click", file: require("../../assets/sounds/click.mp3") },
+        { key: "coin", file: require("../../assets/sounds/coin.mp3") },
+        { key: "error", file: require("../../assets/sounds/error.mp3") },
+        { key: "reelStop", file: require("../../assets/sounds/retro.mp3") },
+        { key: "maquinita", file: require("../../assets/sounds/maquinita.mp3") },
       ];
-      
-      setReels(newReels);
-      
-      const win = calculateWin(newReels);
-      if (win > 0) {
-        setLastWin(win);
-        setBalance(prev => prev + win);
-        
-        // Si es jackpot, resetear
-        if (win === jackpot) {
-          setJackpot(5000);
-          Alert.alert('🎊 JACKPOT! 🎊', '¡Felicidades! Ganaste el Jackpot!');
+
+      for (const { key, file } of soundTypes) {
+        try {
+          const { sound } = await Audio.Sound.createAsync(file);
+          soundObjects[key] = sound;
+        } catch (error) {
+          console.log(`Error cargando sonido ${key}:`, error);
         }
       }
-      
-      setSpinning(false);
+
+      setSounds(soundObjects);
+      soundsRef.current = soundObjects;
+    } catch (error) {
+      console.log("Error inicializando sistema de sonido:", error);
+    }
+  };
+
+  const playSound = async (type) => {
+    try {
+      const sound = soundsRef.current[type];
+      if (sound) {
+        await sound.stopAsync();
+        await sound.playAsync();
+      }
+    } catch (error) {
+      console.log(`Error reproduciendo sonido ${type}:`, error);
+    }
+  };
+
+  const stopAllSounds = async () => {
+    try {
+      for (const sound of Object.values(soundsRef.current)) {
+        if (sound) {
+          await sound.stopAsync();
+        }
+      }
+    } catch (error) {
+      console.log("Error stopping sounds:", error);
+    }
+  };
+
+  useEffect(() => {
+    loadSounds();
+
+    return () => {
+      Object.values(soundsRef.current).forEach((sound) => {
+        if (sound) {
+          sound.unloadAsync();
+        }
+      });
+    };
+  }, []);
+
+  return { playSound, stopAllSounds };
+};
+
+// Componente de animación de victoria
+const WinAnimation = ({ show, amount, isJackpot = false }) => {
+  const [scaleAnim] = useState(new Animated.Value(0));
+  const [rotateAnim] = useState(new Animated.Value(0));
+  const [pulseAnim] = useState(new Animated.Value(1));
+  const [fadeAnim] = useState(new Animated.Value(0));
+
+  useEffect(() => {
+    if (show) {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      scaleAnim.setValue(0);
+      rotateAnim.setValue(0);
+      pulseAnim.setValue(1);
+      fadeAnim.setValue(0);
+    }
+  }, [show]);
+
+  const rotateInterpolation = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  if (!show) return null;
+
+  return (
+    <Animated.View
+      style={[
+        styles.animationContainer,
+        styles.winAnimation,
+        {
+          transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
+          opacity: fadeAnim,
+        },
+      ]}
+    >
+      <Animated.View style={{ transform: [{ rotate: rotateInterpolation }] }}>
+        <Ionicons name="trophy" size={80} color="#FFD700" />
+      </Animated.View>
+      <Text style={styles.winAnimationText}>
+        {isJackpot ? "¡JACKPOT!" : "¡GANASTE!"}
+      </Text>
+      <Text style={styles.winAnimationAmount}>
+        +{amount.toLocaleString()} TICKETS
+      </Text>
+    </Animated.View>
+  );
+};
+
+// Componente de animación de pérdida
+const LoseAnimation = ({ show }) => {
+  const [scaleAnim] = useState(new Animated.Value(0));
+  const [shakeAnim] = useState(new Animated.Value(0));
+  const [fadeAnim] = useState(new Animated.Value(0));
+
+  useEffect(() => {
+    if (show) {
+      Animated.sequence([
+        Animated.parallel([
+          Animated.spring(scaleAnim, {
+            toValue: 1,
+            tension: 100,
+            friction: 8,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.timing(shakeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      scaleAnim.setValue(0);
+      shakeAnim.setValue(0);
+      fadeAnim.setValue(0);
+    }
+  }, [show]);
+
+  const shakeInterpolation = shakeAnim.interpolate({
+    inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
+    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+  });
+
+  if (!show) return null;
+
+  return (
+    <Animated.View
+      style={[
+        styles.animationContainer,
+        styles.loseAnimation,
+        {
+          transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
+          opacity: fadeAnim,
+        },
+      ]}
+    >
+      <Ionicons name="sad-outline" size={80} color="#EF4444" />
+      <Text style={styles.loseAnimationText}>¡SIGUE INTENTANDO!</Text>
+    </Animated.View>
+  );
+};
+
+// Símbolos del juego Lucky Seven Slots
+const symbols = [
+  {
+    id: "seven",
+    name: "Siete",
+    multiplier: 50, // JACKPOT
+    emoji: "7️⃣",
+    color: "#FFD700",
+  },
+  {
+    id: "clover",
+    name: "Trébol",
+    multiplier: 25,
+    emoji: "🍀",
+    color: "#06D6A0",
+  },
+  {
+    id: "money",
+    name: "Dinero",
+    multiplier: 15,
+    emoji: "💰",
+    color: "#FFD700",
+  },
+  {
+    id: "dart",
+    name: "Dardo",
+    multiplier: 12,
+    emoji: "🎯",
+    color: "#EF476F",
+  },
+  {
+    id: "star",
+    name: "Estrella",
+    multiplier: 10,
+    emoji: "⭐",
+    color: "#FFD166",
+  },
+  {
+    id: "bell",
+    name: "Campana",
+    multiplier: 8,
+    emoji: "🔔",
+    color: "#A78BFA",
+  },
+  {
+    id: "slot",
+    name: "Tragaperras",
+    multiplier: 6,
+    emoji: "🎰",
+    color: "#FF6B6B",
+  },
+  {
+    id: "sparkle",
+    name: "Destello",
+    multiplier: 4,
+    emoji: "💫",
+    color: "#4CC9F0",
+  },
+];
+
+// LÓGICA DE TRAGAMONEDAS
+const calculateWin = (reels, betAmount) => {
+  const lines = [
+    [0, 1, 2], // Línea central
+  ];
+
+  let totalTickets = 0;
+  let winningLines = [];
+
+  lines.forEach((line, lineIndex) => {
+    const symbolsInLine = line.map(
+      (reelIndex, position) => reels[position][reelIndex]
+    );
+
+    const firstSymbol = symbolsInLine[0];
+    const allSame = symbolsInLine.every(
+      (symbol) => symbol.id === firstSymbol.id
+    );
+
+    if (allSame) {
+      const winAmount = betAmount * firstSymbol.multiplier;
+      totalTickets += winAmount;
+      winningLines.push({
+        line: lineIndex,
+        symbol: firstSymbol,
+        amount: winAmount,
+      });
+    }
+  });
+
+  // Premios por combinaciones parciales
+  if (reels[0][1] === reels[1][1] || reels[1][1] === reels[2][1]) {
+    const matchingSymbol = reels[1][1];
+    const winAmount = betAmount * 3;
+    totalTickets += winAmount;
+    winningLines.push({
+      line: 1,
+      symbol: matchingSymbol,
+      amount: winAmount,
+      type: "partial",
+    });
+  }
+
+  return {
+    tickets: totalTickets,
+    winningLines,
+    hasWin: totalTickets > 0,
+  };
+};
+
+// Componente de carrete
+const Reel = ({ symbols, reelIndex, isSpinning, winningLines, onReelStop }) => {
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const [currentPosition, setCurrentPosition] = useState(0);
+
+  useEffect(() => {
+    if (isSpinning) {
+      startSpinning();
+    } else {
+      spinAnim.setValue(0);
+    }
+  }, [isSpinning]);
+
+  const startSpinning = () => {
+    spinAnim.setValue(0);
+
+    Animated.timing(spinAnim, {
+      toValue: 1,
+      duration: 1000 + reelIndex * 300,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished && onReelStop) {
+        onReelStop(reelIndex);
+      }
+    });
+  };
+
+  const translateYInterpolation = spinAnim.interpolate({
+    inputRange: [0, 0.3, 0.7, 1],
+    outputRange: [-400, -150, -30, 0],
+  });
+
+  const opacityInterpolation = spinAnim.interpolate({
+    inputRange: [0, 0.2, 0.8, 1],
+    outputRange: [0.8, 0.6, 0.6, 1],
+  });
+
+  return (
+    <View style={styles.reelColumn}>
+      <Animated.View
+        style={[
+          styles.reelContainer,
+          {
+            transform: [{ translateY: translateYInterpolation }],
+            opacity: opacityInterpolation,
+          },
+        ]}
+      >
+        {[...symbols, ...symbols].map((symbol, symbolIndex) => {
+          const actualSymbolIndex = symbolIndex % symbols.length;
+          const actualSymbol = symbols[actualSymbolIndex];
+          const isWinningSymbol = winningLines.some((winLine) => {
+            return winLine.line === 0 && reelIndex === 1; // Solo línea central
+          });
+
+          return (
+            <View
+              key={symbolIndex}
+              style={[
+                styles.symbolSlot,
+                isWinningSymbol && styles.winningSymbol,
+                isSpinning && styles.spinningSymbol,
+              ]}
+            >
+              <Text style={[styles.symbolEmoji, { color: actualSymbol.color }]}>
+                {actualSymbol.emoji}
+              </Text>
+              {isWinningSymbol && <View style={styles.winningGlow} />}
+            </View>
+          );
+        })}
+      </Animated.View>
+      <View style={styles.reelFrame} />
+    </View>
+  );
+};
+
+export default function LuckySevenSlots({ navigation }) {
+  const { manekiCoins, tickets, addTickets, subtractCoins, canAfford } =
+    useCoins();
+  const { playSound, stopAllSounds } = useGameSounds();
+
+  // Estado del juego
+  const [reels, setReels] = useState([
+    [symbols[0], symbols[1], symbols[2]],
+    [symbols[1], symbols[2], symbols[3]],
+    [symbols[2], symbols[3], symbols[4]],
+  ]);
+
+  const [spinning, setSpinning] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  const [bet, setBet] = useState(25);
+  const [lastWin, setLastWin] = useState(0);
+  const [showWinAnimation, setShowWinAnimation] = useState(false);
+  const [showLoseAnimation, setShowLoseAnimation] = useState(false);
+  const [winningLines, setWinningLines] = useState([]);
+  const [stoppedReels, setStoppedReels] = useState(0);
+  const [jackpot, setJackpot] = useState(5000);
+
+  const betAmounts = [10, 25, 50, 100];
+  const [pulseAnim] = useState(new Animated.Value(1));
+  const cooldownRef = useRef(false);
+
+  // Efecto para inicializar audio
+  useEffect(() => {
+    const initializeAudio = async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch (error) {
+        console.log("Error inicializando audio:", error);
+      }
+    };
+    initializeAudio();
+  }, []);
+
+  const pulseAnimation = () => {
+    Animated.sequence([
+      Animated.timing(pulseAnim, {
+        toValue: 1.1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(pulseAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const triggerWinAnimation = (isJackpot = false) => {
+    setShowWinAnimation(true);
+    setTimeout(() => setShowWinAnimation(false), 2500);
+  };
+
+  const triggerLoseAnimation = () => {
+    setShowLoseAnimation(true);
+    setTimeout(() => setShowLoseAnimation(false), 2000);
+  };
+
+  const startCooldown = () => {
+    setCooldown(true);
+    cooldownRef.current = true;
+
+    setTimeout(() => {
+      setCooldown(false);
+      cooldownRef.current = false;
     }, 2000);
   };
 
-  const calculateWin = (currentReels) => {
-    if (currentReels[0] === "7️⃣" && currentReels[1] === "7️⃣" && currentReels[2] === "7️⃣") {
-      return jackpot; // Jackpot
+  const handleReelStop = async (reelIndex) => {
+    setStoppedReels((prev) => prev + 1);
+
+    if (reelIndex < 2) {
+      await playSound("reelStop");
     }
-    if (currentReels[0] === "🍀" && currentReels[1] === "🍀" && currentReels[2] === "🍀") {
-      return bet * 25;
-    }
-    if (currentReels[0] === currentReels[1] && currentReels[1] === currentReels[2]) {
-      return bet * 12;
-    }
-    if (currentReels[0] === currentReels[1] || currentReels[1] === currentReels[2]) {
-      return bet * 3;
-    }
-    return 0;
   };
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>🍀 Lucky 7 Slots</Text>
+  const spinReels = async () => {
+    if (spinning || !canAfford(bet) || cooldownRef.current) {
+      if (!canAfford(bet)) {
+        await playSound("error");
+        Alert.alert(
+          "Fondos Insuficientes",
+          "No tienes suficientes Maneki Coins para esta apuesta"
+        );
+      } else if (cooldownRef.current) {
+        await playSound("error");
+      }
+      return;
+    }
+
+    // INICIAR SPIN
+    setSpinning(true);
+    setCooldown(true);
+    setStoppedReels(0);
+    await subtractCoins(bet, `Apuesta en Lucky Seven Slots`);
+    setLastWin(0);
+    setWinningLines([]);
+
+    // Contribución al jackpot
+    setJackpot((prev) => prev + bet * 0.1);
+
+    // SONIDOS INICIALES
+    await playSound("click");
+    await playSound("maquinita");
+    pulseAnimation();
+
+    // Generar nuevos resultados después de un delay
+    setTimeout(async () => {
+      const newReels = [
+        [
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+        ],
+        [
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+        ],
+        [
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+        ],
+      ];
+
+      setReels(newReels);
+
+      // Calcular ganancias
+      const winResult = calculateWin(newReels, bet);
       
-      <View style={styles.balanceContainer}>
-        <Text style={styles.balance}>Balance: ${balance}</Text>
-        <Text style={styles.bet}>Apuesta: ${bet}</Text>
-        <Text style={styles.jackpot}>Jackpot: ${jackpot}</Text>
-        {lastWin > 0 && (
-          <Animatable.Text 
-            animation="tada" 
-            style={[styles.win, lastWin === jackpot && styles.jackpotWin]}
-          >
-            {lastWin === jackpot ? '🎊 JACKPOT! 🎊' : `¡Ganaste: $${lastWin}!`}
-          </Animatable.Text>
-        )}
-      </View>
+      // Verificar jackpot (tres sietes)
+      const isJackpot = 
+        newReels[0][1].id === "seven" && 
+        newReels[1][1].id === "seven" && 
+        newReels[2][1].id === "seven";
 
-      <View style={styles.slotsContainer}>
-        {reels.map((symbol, index) => (
-          <Animatable.View 
-            key={index}
-            animation={spinning ? "rotate" : null}
-            iterationCount="infinite"
-            style={styles.reel}
-          >
-            <Text style={styles.symbol}>{symbol}</Text>
-          </Animatable.View>
-        ))}
-      </View>
+      let finalWinAmount = winResult.tickets;
+      
+      if (isJackpot) {
+        finalWinAmount = jackpot;
+        setJackpot(5000); // Reset jackpot
+      }
 
-      <TouchableOpacity 
-        style={[styles.spinButton, spinning && styles.spinButtonDisabled]} 
-        onPress={spin}
-        disabled={spinning}
+      if (finalWinAmount > 0) {
+        setLastWin(finalWinAmount);
+        setWinningLines(winResult.winningLines);
+        await addTickets(finalWinAmount, `Ganancia en Lucky Seven Slots`);
+
+        if (isJackpot) {
+          await playSound("jackpot");
+          triggerWinAnimation(true);
+          Vibration.vibrate([500, 200, 500, 200, 500]);
+          Alert.alert("🎊 JACKPOT! 🎊", "¡Felicidades! Ganaste el Jackpot!");
+        } else {
+          await playSound("win");
+          triggerWinAnimation(false);
+          Vibration.vibrate([0, 300, 100, 300]);
+        }
+      } else {
+        await playSound("error");
+        triggerLoseAnimation();
+        Vibration.vibrate(200);
+      }
+
+      // FINALIZAR SPIN Y INICIAR COOLDOWN
+      setTimeout(() => {
+        setSpinning(false);
+        startCooldown();
+      }, 1000);
+    }, 1800);
+  };
+
+  const renderReel = (reelSymbols, reelIndex) => (
+    <Reel
+      key={reelIndex}
+      symbols={reelSymbols}
+      reelIndex={reelIndex}
+      isSpinning={spinning}
+      winningLines={winningLines}
+      onReelStop={handleReelStop}
+    />
+  );
+
+  const canSpin = !spinning && !cooldown && canAfford(bet);
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      {/* Animaciones */}
+      <WinAnimation
+        show={showWinAnimation}
+        amount={lastWin}
+        isJackpot={lastWin === jackpot}
+      />
+      <LoseAnimation show={showLoseAnimation} />
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.spinButtonText}>
-          {spinning ? '🎡 Girando...' : '🍀 Girar por Suerte'}
-        </Text>
-      </TouchableOpacity>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.balances}>
+            <View style={styles.balanceItem}>
+              <Image
+                source={require("../../assets/dinero.png")}
+                style={styles.balanceIcon}
+              />
+              <Text style={styles.balanceText}>
+                {manekiCoins.toLocaleString()} MC
+              </Text>
+            </View>
+            <View style={styles.balanceItem}>
+              <Image
+                source={require("../../assets/TICKET.png")}
+                style={styles.balanceIcon}
+              />
+              <Text style={styles.balanceText}>
+                {tickets.toLocaleString()} T
+              </Text>
+            </View>
+          </View>
 
-      <View style={styles.betOptions}>
-        {[10, 25, 50, 100, 200].map(amount => (
-          <TouchableOpacity
-            key={amount}
-            style={[styles.betButton, bet === amount && styles.betButtonSelected]}
-            onPress={() => setBet(amount)}
-          >
-            <Text style={styles.betButtonText}>${amount}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
+          <View style={styles.titleContainer}>
+            <Text style={styles.title}></Text>
+          </View>
+
+          <View style={styles.emptySpace} />
+        </View>
+
+        {/* Máquina tragamonedas */}
+        <View style={styles.slotsMachine}>
+          <View style={styles.machineHeader}>
+            <Text style={styles.machineTitle}>LUCKY 7 FORTUNE</Text>
+          </View>
+
+          {/* Área de carretes */}
+          <View style={styles.reelsArea}>
+            <View style={styles.reelsRow}>
+              {reels.map((reelSymbols, index) =>
+                renderReel(reelSymbols, index)
+              )}
+            </View>
+
+            {/* Línea de pago central */}
+            <View style={[styles.payline, styles.paylineMiddle]} />
+
+            <View style={styles.windowFrame} />
+          </View>
+
+          {/* Panel de información */}
+          <View style={styles.infoPanel}>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>APUESTA</Text>
+              <Text style={styles.infoValue}>{bet} MC</Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>PREMIO</Text>
+              <Text style={styles.infoValue}>
+                {lastWin > 0 ? `${lastWin} T` : "---"}
+              </Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>JACKPOT</Text>
+              <Text style={styles.infoValue}>{jackpot} T</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Selector de apuesta */}
+        <View style={styles.betSection}>
+          <Text style={styles.betTitle}>SELECCIONAR APUESTA</Text>
+          <View style={styles.betAmountsContainer}>
+            {betAmounts.map((amount) => (
+              <TouchableOpacity
+                key={amount}
+                style={[
+                  styles.betButton,
+                  !canAfford(amount) && styles.disabledButton,
+                  bet === amount && styles.selectedBet,
+                  cooldown && styles.cooldownButton,
+                ]}
+                onPress={async () => {
+                  if (canAfford(amount) && !cooldown) {
+                    setBet(amount);
+                    await playSound("click");
+                  } else {
+                    await playSound("error");
+                  }
+                }}
+                disabled={!canAfford(amount) || cooldown}
+              >
+                <Text style={styles.betButtonText}>{amount}</Text>
+                <Text style={styles.betButtonSubtext}>MC</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Botón de giro principal */}
+        <TouchableOpacity
+          style={[styles.spinButton, !canSpin && styles.spinButtonDisabled]}
+          onPress={spinReels}
+          disabled={!canSpin}
+        >
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <Ionicons
+              name={spinning ? "sync" : cooldown ? "timer" : "play"}
+              size={28}
+              color="#FFF"
+            />
+            <Text style={styles.spinButtonText}>
+              {spinning ? "GIRANDO..." : cooldown ? "PREPARANDO..." : "JUGAR"}
+            </Text>
+          </Animated.View>
+        </TouchableOpacity>
+
+        {/* Indicador de cooldown */}
+        {cooldown && (
+          <View style={styles.cooldownIndicator}>
+            <Ionicons name="timer" size={16} color="#4CAF50" />
+            <Text style={styles.cooldownText}>
+              Preparando siguiente tirada...
+            </Text>
+          </View>
+        )}
+
+        {/* Tabla de pagos */}
+        <View style={styles.payoutInfo}>
+          <Text style={styles.payoutTitle}>TABLA DE PAGOS</Text>
+          <View style={styles.payoutGrid}>
+            {symbols.map((symbol) => (
+              <View key={symbol.id} style={styles.payoutItem}>
+                <Text style={[styles.payoutEmoji, { color: symbol.color }]}>
+                  {symbol.emoji}
+                </Text>
+                <Text style={styles.payoutMultiplier}>
+                  x{symbol.multiplier}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <Text style={styles.payoutNote}>
+            3 símbolos iguales en línea central | 2 símbolos = x3
+          </Text>
+          <Text style={styles.jackpotNote}>
+            🎯 TRES 7️⃣ = JACKPOT 🎯
+          </Text>
+        </View>
+
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
-    padding: 20,
-    alignItems: 'center',
+    backgroundColor: "#0A0A0A",
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 20,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+    paddingHorizontal: 8,
+  },
+  balances: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  balanceItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1A1A1A",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+    gap: 6,
+  },
+  balanceIcon: {
+    width: 16,
+    height: 16,
+    resizeMode: "contain",
+  },
+  balanceText: {
+    color: "#FFD700",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  titleContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 20,
-  },
-  balanceContainer: {
-    backgroundColor: '#2a2a2a',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  balance: {
-    color: '#4CAF50',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  bet: {
-    color: 'white',
-    fontSize: 16,
-  },
-  jackpot: {
-    color: '#FFD700',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  win: {
-    color: '#4CAF50',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 5,
-  },
-  jackpotWin: {
-    color: '#FFD700',
+    color: "#4CAF50",
     fontSize: 20,
+    fontWeight: "bold",
+    letterSpacing: 2,
   },
-  slotsContainer: {
-    flexDirection: 'row',
-    marginBottom: 30,
+  emptySpace: {
+    width: 40,
   },
-  reel: {
-    width: 80,
-    height: 80,
-    backgroundColor: '#2a2a2a',
-    borderRadius: 10,
-    margin: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#4CAF50',
-  },
-  symbol: {
-    fontSize: 30,
-  },
-  spinButton: {
-    backgroundColor: '#4CAF50',
-    padding: 15,
-    borderRadius: 10,
-    minWidth: 150,
-    alignItems: 'center',
+  // Estilos de la tragamonedas
+  slotsMachine: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 20,
+    padding: 0,
     marginBottom: 20,
+    borderWidth: 4,
+    borderColor: "#4CAF50",
+    overflow: "hidden",
   },
-  spinButtonDisabled: {
-    backgroundColor: '#666',
+  machineHeader: {
+    backgroundColor: "#4CAF50",
+    paddingVertical: 10,
+    alignItems: "center",
   },
-  spinButtonText: {
-    color: '#000',
+  machineTitle: {
+    color: "#000",
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: "bold",
+    letterSpacing: 2,
   },
-  betOptions: {
-    flexDirection: 'row',
-    marginBottom: 20,
+  reelsArea: {
+    backgroundColor: "#2a2a2a",
+    padding: 15,
+    position: "relative",
+    height: 220,
+    overflow: "hidden",
+  },
+  reelsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 5,
+    height: 170,
+    overflow: "hidden",
+  },
+  reelColumn: {
+    flex: 1,
+    alignItems: "center",
+    position: "relative",
+    height: 170,
+    overflow: "hidden",
+  },
+  reelContainer: {
+    alignItems: "center",
+    width: "100%",
+    height: 340,
+  },
+  symbolSlot: {
+    width: 80,
+    height: 55,
+    backgroundColor: "#2a2a2a",
+    marginVertical: 2,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+    position: "relative",
+  },
+  spinningSymbol: {
+    opacity: 0.9,
+  },
+  winningSymbol: {
+    backgroundColor: "rgba(76, 175, 80, 0.2)",
+    borderColor: "#4CAF50",
+  },
+  winningGlow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(76, 175, 80, 0.3)",
+    borderRadius: 8,
+  },
+  symbolEmoji: {
+    fontSize: 28,
+  },
+  reelFrame: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderWidth: 2,
+    borderColor: "#4CAF50",
+    borderRadius: 10,
+    pointerEvents: "none",
+  },
+  windowFrame: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderWidth: 3,
+    borderColor: "#000",
+    borderRadius: 12,
+    pointerEvents: "none",
+  },
+  payline: {
+    position: "absolute",
+    left: 15,
+    right: 15,
+    height: 2,
+    backgroundColor: "#FFD700",
+    zIndex: 1,
+    opacity: 0.6,
+  },
+  paylineMiddle: {
+    top: "50%",
+  },
+  infoPanel: {
+    flexDirection: "row",
+    backgroundColor: "#2a2a2a",
+    padding: 10,
+    borderTopWidth: 2,
+    borderTopColor: "#4CAF50",
+  },
+  infoItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  infoLabel: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  infoValue: {
+    color: "#FFD700",
+    fontSize: 14,
+    fontWeight: "bold",
+    marginTop: 2,
+  },
+  // Sección de apuesta
+  betSection: {
+    backgroundColor: "rgba(26, 26, 26, 0.9)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+    width: "100%",
+    alignSelf: "center",
+  },
+  betTitle: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 12,
+    textAlign: "center",
+    letterSpacing: 1,
+  },
+  betAmountsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
   },
   betButton: {
-    backgroundColor: '#333',
-    padding: 10,
-    margin: 5,
-    borderRadius: 5,
-    minWidth: 50,
-    alignItems: 'center',
+    backgroundColor: "#2A2A2A",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#444",
+    minWidth: 70,
+    flex: 1,
+    marginHorizontal: 2,
   },
-  betButtonSelected: {
-    backgroundColor: '#4CAF50',
+  selectedBet: {
+    borderColor: "#4CAF50",
+    backgroundColor: "rgba(76, 175, 80, 0.1)",
   },
   betButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
+    color: "#FFD700",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  betButtonSubtext: {
+    color: "#FFF",
+    fontSize: 10,
+    marginTop: 2,
+  },
+  // Botón de giro
+  spinButton: {
+    backgroundColor: "#4CAF50",
+    paddingHorizontal: 40,
+    paddingVertical: 18,
+    borderRadius: 25,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#45a049",
+    marginBottom: 16,
+    width: "100%",
+    alignSelf: "center",
+  },
+  spinButtonDisabled: {
+    backgroundColor: "#666",
+    borderColor: "#444",
+  },
+  spinButtonText: {
+    color: "#FFF",
+    fontWeight: "bold",
+    fontSize: 18,
+    letterSpacing: 1,
+    marginTop: 4,
+  },
+  // Cooldown
+  cooldownIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(76, 175, 80, 0.1)",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(76, 175, 80, 0.3)",
+    marginBottom: 20,
+    width: "100%",
+    alignSelf: "center",
+  },
+  cooldownText: {
+    color: "#4CAF50",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  cooldownButton: {
+    opacity: 0.6,
+  },
+  // Tabla de pagos
+  payoutInfo: {
+    backgroundColor: "rgba(26, 26, 26, 0.9)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+    width: "100%",
+    alignSelf: "center",
+  },
+  payoutTitle: {
+    color: "#4CAF50",
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 12,
+    letterSpacing: 1,
+  },
+  payoutGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    marginBottom: 8,
+    gap: 8,
+  },
+  payoutItem: {
+    alignItems: "center",
+    backgroundColor: "#2A2A2A",
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#444",
+    minWidth: 70,
+    flex: 1,
+    marginHorizontal: 2,
+  },
+  payoutEmoji: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  payoutMultiplier: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  payoutNote: {
+    color: "#FFF",
+    fontSize: 10,
+    textAlign: "center",
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  jackpotNote: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  bottomSpacer: {
+    height: 10,
+  },
+  disabledButton: {
+    backgroundColor: "#1A1A1A",
+    borderColor: "#333",
+    opacity: 0.5,
+  },
+  // Animaciones
+  animationContainer: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    marginLeft: -120,
+    marginTop: -100,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    padding: 30,
+    borderRadius: 20,
+    borderWidth: 4,
+    width: 240,
+    height: 200,
+  },
+  winAnimation: {
+    borderColor: "#FFD700",
+  },
+  loseAnimation: {
+    borderColor: "#EF4444",
+  },
+  winAnimationText: {
+    color: "#FFF",
+    fontSize: 24,
+    fontWeight: "bold",
+    marginTop: 10,
+    textAlign: "center",
+  },
+  winAnimationAmount: {
+    color: "#FFD700",
+    fontSize: 20,
+    fontWeight: "bold",
+    marginTop: 8,
+  },
+  loseAnimationText: {
+    color: "#EF4444",
+    fontSize: 24,
+    fontWeight: "bold",
+    marginTop: 10,
+    textAlign: "center",
   },
 });

@@ -1,38 +1,40 @@
-// src/games/wheels/MoneyWheel.js
-import React, { useRef, useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
+// src/games/dice/DiceRoll.js
+import React, { useState, useEffect } from 'react';
+import { 
+  View, 
+  Text, 
+  TouchableOpacity, 
+  StyleSheet, 
   Animated,
+  Easing,
+  Dimensions,
+  ScrollView,
+  SafeAreaView,
   Vibration,
   Alert,
-  SafeAreaView,
-  ScrollView,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useCoins } from "../../context/CoinsContext";
-import { Audio } from "expo-av";
+  Image
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useCoins } from '../../context/CoinsContext';
+import { Audio } from 'expo-av';
 
-// Secciones de la rueda balanceadas - algunas dan pérdidas
-const WHEEL_SECTIONS = [
-  { label: "x1", multiplier: 1, color: "#FF6B6B", ticketsMultiplier: 1 }, // Rojo - Recupera
-  { label: "x0.5", multiplier: 0.5, color: "#4ECDC4", ticketsMultiplier: 0.5 }, // Turquesa - Pierde mitad
-  { label: "x5", multiplier: 5, color: "#FFD700", ticketsMultiplier: 5 }, // Amarillo - Gana mucho
-  { label: "x0", multiplier: 0, color: "#95E1D3", ticketsMultiplier: 0 }, // Verde claro - Pierde todo
-  { label: "x2", multiplier: 2, color: "#FF9FF3", ticketsMultiplier: 2 }, // Rosa - Gana normal
-  {
-    label: "x0.25",
-    multiplier: 0.25,
-    color: "#FF9F43",
-    ticketsMultiplier: 0.25,
-  }, // Naranja - Pierde mucho
-  { label: "x10", multiplier: 10, color: "#54A0FF", ticketsMultiplier: 10 }, // Azul - Gana mucho
-  { label: "BUST", multiplier: 0, color: "#576574", ticketsMultiplier: 0 }, // Gris - Pierde todo
-];
+const { width, height } = Dimensions.get('window');
 
-// Hook de sonidos para MoneyWheel
+// Tabla de premios de tickets para Dice Roll
+const getTicketRewards = (betAmount, prediction) => {
+  const multipliers = {
+    'low': 2,
+    'high': 2,
+    'seven': 4
+  };
+  
+  const baseTickets = betAmount * 0.5; // 0.5 tickets por cada coin apostado
+  const multiplier = multipliers[prediction] || 1;
+  
+  return Math.floor(baseTickets * multiplier);
+};
+
+// Hook de sonidos para DiceRoll
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
 
@@ -49,11 +51,11 @@ const useGameSounds = () => {
       const soundObjects = {};
 
       const soundTypes = [
-        { key: "wheel", file: require("../../assets/sounds/wheel.mp3") },
-        { key: "click", file: require("../../assets/sounds/click.mp3") },
-        { key: "coin", file: require("../../assets/sounds/coin.mp3") },
-        { key: "error", file: require("../../assets/sounds/error.mp3") },
-        { key: "success", file: require("../../assets/sounds/success.mp3") },
+        { key: 'card', file: require('../../assets/sounds/card.mp3') },
+        { key: 'click', file: require('../../assets/sounds/click.mp3') },
+        { key: 'coin', file: require('../../assets/sounds/coin.mp3') },
+        { key: 'error', file: require('../../assets/sounds/error.mp3') },
+        { key: 'success', file: require('../../assets/sounds/success.mp3') }
       ];
 
       for (const { key, file } of soundTypes) {
@@ -67,57 +69,61 @@ const useGameSounds = () => {
       }
 
       setSounds(soundObjects);
+      
     } catch (error) {
-      console.log("❌ Error inicializando sistema de sonido:", error);
+      console.log('❌ Error inicializando sistema de sonido:', error);
     }
   };
 
   const playSound = async (type) => {
     try {
       let soundKey;
-      switch (type) {
-        case "win":
-          soundKey = "success";
+      switch(type) {
+        case 'win':
+          soundKey = 'success';
           break;
-        case "lose":
-          soundKey = "error";
+        case 'lose':
+          soundKey = 'error';
           break;
-        case "wheel":
-          soundKey = "wheel";
+        case 'dice':
+          soundKey = 'card';
           break;
-        case "coin":
-          soundKey = "coin";
+        case 'chip':
+        case 'coin':
+          soundKey = 'coin';
           break;
-        case "click":
+        case 'click':
         default:
-          soundKey = "click";
+          soundKey = 'click';
       }
-
+      
       if (sounds[soundKey]) {
         await sounds[soundKey].replayAsync();
       } else {
         playVibration(type);
       }
+      
     } catch (error) {
       playVibration(type);
     }
   };
 
   const playVibration = (type) => {
-    switch (type) {
-      case "win":
+    switch(type) {
+      case 'win':
         Vibration.vibrate([0, 100, 50, 100, 50, 100]);
         break;
-      case "lose":
+      case 'lose':
         Vibration.vibrate([0, 300, 100, 300]);
         break;
-      case "wheel":
-        Vibration.vibrate([0, 200, 100, 200]);
+      case 'dice':
+        Vibration.vibrate([0, 50, 25, 50]);
         break;
-      case "coin":
+      case 'chip':
+      case 'coin':
         Vibration.vibrate(20);
         break;
-      case "click":
+      case 'click':
       default:
         Vibration.vibrate(15);
     }
@@ -125,9 +131,9 @@ const useGameSounds = () => {
 
   useEffect(() => {
     loadSounds();
-
+    
     return () => {
-      Object.values(sounds).forEach((sound) => {
+      Object.values(sounds).forEach(sound => {
         if (sound) {
           sound.unloadAsync();
         }
@@ -175,13 +181,16 @@ const WinAnimation = ({ show, ticketsWon = 0 }) => {
   if (!show) return null;
 
   return (
-    <Animated.View
+    <Animated.View 
       style={[
         styles.animationContainer,
         styles.winAnimation,
         {
-          transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
-        },
+          transform: [
+            { scale: scaleAnim },
+            { scale: pulseAnim }
+          ]
+        }
       ]}
     >
       <Ionicons name="trophy" size={50} color="#FFD700" />
@@ -195,7 +204,7 @@ const WinAnimation = ({ show, ticketsWon = 0 }) => {
 };
 
 // Componente de animación de derrota
-const LoseAnimation = ({ show, message = "Sin premio esta vez" }) => {
+const LoseAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [shakeAnim] = useState(new Animated.Value(0));
 
@@ -212,7 +221,7 @@ const LoseAnimation = ({ show, message = "Sin premio esta vez" }) => {
           toValue: 1,
           duration: 500,
           useNativeDriver: true,
-        }),
+        })
       ]).start();
     } else {
       scaleAnim.setValue(0);
@@ -222,65 +231,45 @@ const LoseAnimation = ({ show, message = "Sin premio esta vez" }) => {
 
   const shakeInterpolation = shakeAnim.interpolate({
     inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0]
   });
 
   if (!show) return null;
 
   return (
-    <Animated.View
+    <Animated.View 
       style={[
         styles.animationContainer,
         styles.loseAnimation,
         {
-          transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
-        },
+          transform: [
+            { scale: scaleAnim },
+            { translateX: shakeInterpolation }
+          ]
+        }
       ]}
     >
       <Ionicons name="sad-outline" size={50} color="#EF4444" />
       <Text style={styles.loseText}>¡PERDISTE!</Text>
-      <Text style={styles.loseSubtext}>{message}</Text>
+      <Text style={styles.loseSubtext}>Pierdes la apuesta</Text>
     </Animated.View>
   );
 };
 
-// Componente para cada sección de la rueda - CORREGIDO
-const WheelSection = ({ section, index, totalSections }) => {
-  const angle = (360 / totalSections) * index;
-
-  return (
-    <View
-      style={[
-        styles.wheelSection,
-        {
-          backgroundColor: section.color,
-          transform: [{ rotate: `${angle}deg` }],
-        },
-      ]}
-    >
-      <View style={styles.sectionContent}>
-        <Text style={styles.sectionLabel}>{section.label}</Text>
-      </View>
-    </View>
-  );
-};
-
-export default function MoneyWheel({ navigation }) {
-  const { manekiCoins, tickets, subtractCoins, addTickets, canAfford } =
-    useCoins();
+export default function DiceRoll({ navigation }) {
+  const { manekiCoins, tickets, subtractCoins, addTickets, canAfford } = useCoins();
   const playSound = useGameSounds();
-
+  
   const [bet, setBet] = useState(0);
-  const [spinning, setSpinning] = useState(false);
-  const [result, setResult] = useState("");
+  const [dice, setDice] = useState([1, 1]);
+  const [gameState, setGameState] = useState('betting');
+  const [result, setResult] = useState('');
   const [ticketsWon, setTicketsWon] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
-  const [selectedBet, setSelectedBet] = useState(0);
-  const [winningSection, setWinningSection] = useState(null);
-  const [loseMessage, setLoseMessage] = useState("");
-
-  const spinAnimation = useRef(new Animated.Value(0)).current;
+  
+  const diceAnimations = useState(new Animated.Value(0))[0];
+  const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {
@@ -295,6 +284,29 @@ export default function MoneyWheel({ navigation }) {
     };
     initializeAudio();
   }, []);
+
+  const diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+  const diceValues = [1, 2, 3, 4, 5, 6];
+
+  const animateDice = () => {
+    diceAnimations.setValue(0);
+    Animated.timing(diceAnimations, {
+      toValue: 1,
+      duration: 600,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const animateResult = () => {
+    resultAnimations.setValue(0);
+    Animated.spring(resultAnimations, {
+      toValue: 1,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
 
   const pulseAnimation = () => {
     Animated.sequence([
@@ -317,381 +329,327 @@ export default function MoneyWheel({ navigation }) {
     setTimeout(() => {
       setShowWinAnimation(false);
       setTicketsWon(0);
-    }, 3000);
+    }, 2000);
   };
 
-  const triggerLoseAnimation = (message = "Sin premio esta vez") => {
-    setLoseMessage(message);
+  const triggerLoseAnimation = () => {
     setShowLoseAnimation(true);
-    setTimeout(() => {
-      setShowLoseAnimation(false);
-      setLoseMessage("");
-    }, 3000);
+    setTimeout(() => setShowLoseAnimation(false), 2000);
   };
 
-  // Función para calcular probabilidades balanceadas - más pérdidas
-  const getWeightedRandomSection = () => {
-    // Probabilidades: 4 pérdidas, 4 ganancias pero con diferentes valores
-    const weights = [0.2, 0.15, 0.08, 0.12, 0.2, 0.1, 0.05, 0.1];
-    const random = Math.random();
-    let cumulativeWeight = 0;
-
-    for (let i = 0; i < weights.length; i++) {
-      cumulativeWeight += weights[i];
-      if (random <= cumulativeWeight) {
-        return i;
-      }
-    }
-    return 7; // BUST como fallback
-  };
-
-  const spinWheel = async (betAmount) => {
-    if (!canAfford(betAmount) || spinning) {
-      await playSound("error");
-      Alert.alert(
-        "Fondos Insuficientes",
-        "No tienes suficientes Maneki Coins para esta apuesta"
-      );
+  const placeBet = async (amount, prediction) => {
+    if (!canAfford(amount)) {
+      await playSound('error');
+      Alert.alert('Fondos Insuficientes', 'No tienes suficientes Maneki Coins para esta apuesta');
       return;
     }
 
-    setBet(betAmount);
-    setSelectedBet(betAmount);
-    await subtractCoins(betAmount, `Apuesta en Money Wheel`);
-    await playSound("coin");
+    setBet(amount);
+    subtractCoins(amount, `Apuesta en Dice Roll`);
+    await playSound('coin');
     pulseAnimation();
 
-    setSpinning(true);
-    setResult("");
+    setGameState('rolling');
+    setResult('');
     setTicketsWon(0);
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
-    setWinningSection(null);
-    setLoseMessage("");
 
-    // Animación de la rueda girando
-    await playSound("wheel");
+    // Animación de dados rodando
+    await playSound('dice');
+    animateDice();
 
-    const extraRotations = 4 + Math.random() * 2;
-    const sectionAngle = 360 / WHEEL_SECTIONS.length;
-
-    // Usar probabilidades balanceadas
-    const winningIndex = getWeightedRandomSection();
-    setWinningSection(winningIndex);
-
-    const finalRotation = extraRotations * 360 + winningIndex * sectionAngle;
-
-    Animated.timing(spinAnimation, {
-      toValue: finalRotation,
-      duration: 3500,
-      useNativeDriver: true,
-    }).start(async () => {
-      const winMultiplier = WHEEL_SECTIONS[winningIndex].multiplier;
-      const ticketsMultiplier = WHEEL_SECTIONS[winningIndex].ticketsMultiplier;
-      const ticketsReward = Math.floor(betAmount * ticketsMultiplier);
-
-      // Determinar si es victoria o derrota
-      if (ticketsMultiplier > 1) {
-        // Victoria buena (x2, x5, x10)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} MULTIPLICADOR!`);
-        await playSound("win");
-        triggerWinAnimation(ticketsReward);
-        await addTickets(
-          ticketsReward,
-          `Ganancia en Money Wheel - ${WHEEL_SECTIONS[winningIndex].label}`
-        );
-      } else if (ticketsMultiplier === 1) {
-        // Victoria mínima (solo recupera)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} - Recuperas!`);
-        await playSound("win");
-        triggerWinAnimation(ticketsReward);
-        await addTickets(ticketsReward, `Recuperación en Money Wheel`);
-      } else if (ticketsMultiplier > 0 && ticketsMultiplier < 1) {
-        // Pérdida parcial
-        const lostPercentage = Math.round((1 - ticketsMultiplier) * 100);
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} - Pérdida!`);
-        await playSound("lose");
-        triggerLoseAnimation(`Pierdes el ${lostPercentage}% de tu apuesta`);
-        // Agregar tickets reducidos para pérdidas parciales
-        await addTickets(ticketsReward, `Pérdida parcial en Money Wheel`);
-      } else {
-        // Pérdida total (BUST o x0)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label.toUpperCase()}!`);
-        await playSound("lose");
-        triggerLoseAnimation("Pierdes toda tu apuesta");
-        // No se agregan tickets
+    let rollCount = 0;
+    const maxRolls = 6;
+    const rollInterval = setInterval(() => {
+      const tempRoll1 = diceValues[Math.floor(Math.random() * 6)];
+      const tempRoll2 = diceValues[Math.floor(Math.random() * 6)];
+      
+      setDice([tempRoll1, tempRoll2]);
+      
+      rollCount++;
+      if (rollCount >= maxRolls) {
+        clearInterval(rollInterval);
+        
+        setTimeout(() => {
+          const finalRoll1 = diceValues[Math.floor(Math.random() * 6)];
+          const finalRoll2 = diceValues[Math.floor(Math.random() * 6)];
+          const total = finalRoll1 + finalRoll2;
+          
+          setDice([finalRoll1, finalRoll2]);
+          determineResult(total, prediction, amount);
+        }, 150);
       }
+    }, 80);
+  };
 
-      setSpinning(false);
-    });
+  const determineResult = async (total, prediction, betAmount) => {
+    let ticketsReward = 0;
+    let resultMessage = '';
+
+    if (prediction === 'high' && total > 7) {
+      ticketsReward = getTicketRewards(betAmount, 'high');
+      resultMessage = `ALTO - ${total} > 7`;
+      await playSound('win');
+      triggerWinAnimation(ticketsReward);
+    } else if (prediction === 'low' && total < 7) {
+      ticketsReward = getTicketRewards(betAmount, 'low');
+      resultMessage = `BAJO - ${total} < 7`;
+      await playSound('win');
+      triggerWinAnimation(ticketsReward);
+    } else if (prediction === 'seven' && total === 7) {
+      ticketsReward = getTicketRewards(betAmount, 'seven');
+      resultMessage = `SIETE - ${total} = 7`;
+      await playSound('win');
+      triggerWinAnimation(ticketsReward);
+    } else {
+      resultMessage = `TOTAL ${total} - SIN PREMIO`;
+      await playSound('lose');
+      triggerLoseAnimation();
+    }
+
+    // Procesar SOLO tickets si hay ganancia
+    // NO agregar coins adicionales
+    if (ticketsReward > 0) {
+      await addTickets(ticketsReward, `Ganancia en Dice Roll - ${resultMessage.split(' - ')[0]}`);
+    }
+
+    setTicketsWon(ticketsReward);
+    setResult(resultMessage);
+    setGameState('result');
+    animateResult();
+    pulseAnimation();
   };
 
   const resetGame = async () => {
-    setSelectedBet(0);
-    setResult("");
+    setBet(0);
+    setGameState('betting');
+    setResult('');
     setTicketsWon(0);
-    setWinningSection(null);
-    setLoseMessage("");
-    await playSound("click");
+    setShowWinAnimation(false);
+    setShowLoseAnimation(false);
+    await playSound('click');
   };
 
-  const spinRotation = spinAnimation.interpolate({
-    inputRange: [0, 360],
-    outputRange: ["0deg", "360deg"],
-  });
+  const renderDice = (diceValue, index) => {
+    const diceAnimation = {
+      transform: [
+        {
+          rotate: diceAnimations.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', '360deg'],
+          }),
+        },
+        {
+          scale: diceAnimations.interpolate({
+            inputRange: [0, 0.5, 1],
+            outputRange: [1, 1.1, 1],
+          }),
+        },
+      ],
+      opacity: diceAnimations,
+    };
+
+    return (
+      <Animated.View key={index} style={[styles.dice, diceAnimation]}>
+        <Text style={styles.diceFace}>{diceFaces[diceValue - 1]}</Text>
+      </Animated.View>
+    );
+  };
 
   const betAmounts = [50, 100, 250, 500];
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <WinAnimation show={showWinAnimation} ticketsWon={ticketsWon} />
-      <LoseAnimation show={showLoseAnimation} message={loseMessage} />
+      <LoseAnimation show={showLoseAnimation} />
 
-      <ScrollView
+      <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Título del juego */}
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>💰 MONEY WHEEL</Text>
-          <Text style={styles.subtitle}>Gira y prueba tu suerte</Text>
-        </View>
+        {/* Header compacto */}
+        <View style={styles.header}>
+          {/* Saldo y Tickets */}
+          <View style={styles.balancesContainer}>
+            <View style={styles.balanceRow}>
+              {/* Saldo */}
+              <View style={styles.balanceItem}>
+                <View style={styles.coinsDisplay}>
+                  <Image
+                    source={require("../../assets/dinero.png")}
+                    style={styles.coinIcon}
+                  />
+                  <Text style={styles.balanceText}>
+                    {manekiCoins.toLocaleString()}
+                  </Text>
+                </View>
+              </View>
 
-        {/* Rueda del dinero - CORREGIDA */}
-        <View style={styles.wheelContainer}>
-          <Animated.View
-            style={[styles.wheel, { transform: [{ rotate: spinRotation }] }]}
-          >
-            <View style={styles.wheelInner}>
-              {WHEEL_SECTIONS.map((section, index) => (
-                <WheelSection
-                  key={index}
-                  section={section}
-                  index={index}
-                  totalSections={WHEEL_SECTIONS.length}
-                />
-              ))}
+              {/* Tickets */}
+              <View style={styles.balanceItem}>
+                <View style={styles.ticketsDisplay}>
+                  <Image
+                    source={require("../../assets/TICKET.png")}
+                    style={styles.ticketIcon}
+                  />
+                  <Text style={styles.balanceText}>
+                    {tickets.toLocaleString()}
+                  </Text>
+                </View>
+              </View>
             </View>
-            <View style={styles.wheelCenter}>
-              <Text style={styles.wheelCenterText}>💰</Text>
-            </View>
-          </Animated.View>
-          <View style={styles.pointer} />
-        </View>
-
-        {/* Información de sección ganadora */}
-        {winningSection !== null && !spinning && (
-          <View
-            style={[
-              styles.winningSectionInfo,
-              {
-                backgroundColor: WHEEL_SECTIONS[winningSection].color + "40",
-                borderColor:
-                  WHEEL_SECTIONS[winningSection].ticketsMultiplier > 1
-                    ? "#10B981"
-                    : WHEEL_SECTIONS[winningSection].ticketsMultiplier === 1
-                    ? "#F59E0B"
-                    : "#EF4444",
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.winningColor,
-                { backgroundColor: WHEEL_SECTIONS[winningSection].color },
-              ]}
-            />
-            <Text style={styles.winningText}>
-              {WHEEL_SECTIONS[winningSection].multiplier > 1
-                ? `Ganas: x${WHEEL_SECTIONS[winningSection].multiplier}`
-                : WHEEL_SECTIONS[winningSection].multiplier === 1
-                ? `Recuperas: x${WHEEL_SECTIONS[winningSection].multiplier}`
-                : WHEEL_SECTIONS[winningSection].multiplier > 0
-                ? `Pierdes: ${Math.round(
-                    (1 - WHEEL_SECTIONS[winningSection].multiplier) * 100
-                  )}%`
-                : "Pierdes: 100%"}
-            </Text>
           </View>
-        )}
+          
+          <View style={styles.titleContainer}>
+            <Text style={styles.title}>DICE ROLL</Text>
+          </View>
 
-        {/* Mensaje de resultado */}
+          <View style={styles.emptySpace} />
+        </View>
+
+        {/* Área de dados compacta */}
+        <View style={styles.diceArea}>
+          <View style={styles.diceContainer}>
+            {renderDice(dice[0], 1)}
+            {renderDice(dice[1], 2)}
+          </View>
+          
+          <View style={styles.diceInfo}>
+            <Text style={styles.total}>{dice[0] + dice[1]}</Text>
+          </View>
+        </View>
+
+        {/* Mensaje de resultado mini */}
         {result && (
-          <Animated.View
-            style={[
-              styles.messageContainer,
-              {
-                transform: [{ scale: pulseAnim }],
-                borderColor:
-                  WHEEL_SECTIONS[winningSection]?.ticketsMultiplier > 1
-                    ? "#10B981"
-                    : WHEEL_SECTIONS[winningSection]?.ticketsMultiplier === 1
-                    ? "#F59E0B"
-                    : "#EF4444",
-                backgroundColor:
-                  WHEEL_SECTIONS[winningSection]?.ticketsMultiplier > 1
-                    ? "rgba(16, 185, 129, 0.1)"
-                    : WHEEL_SECTIONS[winningSection]?.ticketsMultiplier === 1
-                    ? "rgba(245, 158, 11, 0.1)"
-                    : "rgba(239, 68, 68, 0.1)",
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.result,
+          <Animated.View style={[
+            styles.messageContainer,
+            {
+              transform: [
                 {
-                  color:
-                    WHEEL_SECTIONS[winningSection]?.ticketsMultiplier > 1
-                      ? "#10B981"
-                      : WHEEL_SECTIONS[winningSection]?.ticketsMultiplier === 1
-                      ? "#F59E0B"
-                      : "#EF4444",
-                },
-              ]}
-            >
+                  scale: resultAnimations.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.9, 1],
+                  })
+                }
+              ],
+              borderColor: result.includes('SIN PREMIO') ? '#EF4444' : '#10B981',
+              backgroundColor: result.includes('SIN PREMIO') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+            }
+          ]}>
+            <Text style={[
+              styles.message,
+              { color: result.includes('SIN PREMIO') ? '#EF4444' : '#10B981' }
+            ]}>
               {result}
             </Text>
             {ticketsWon > 0 && (
               <View style={styles.ticketsWonContainer}>
                 <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets</Text>
-                <Text style={styles.ticketsCalculation}>
-                  ({selectedBet} x{" "}
-                  {WHEEL_SECTIONS[winningSection]?.ticketsMultiplier})
-                </Text>
               </View>
             )}
-            {selectedBet > 0 &&
-              WHEEL_SECTIONS[winningSection]?.ticketsMultiplier < 1 &&
-              WHEEL_SECTIONS[winningSection]?.ticketsMultiplier > 0 && (
-                <Text style={styles.loseInfo}>
-                  Recibes:{" "}
-                  {Math.floor(
-                    selectedBet *
-                      WHEEL_SECTIONS[winningSection]?.ticketsMultiplier
-                  )}{" "}
-                  tickets
-                </Text>
-              )}
-            {selectedBet > 0 && (
+            {bet > 0 && (
               <Text style={styles.betInfo}>
-                Apuesta: {selectedBet.toLocaleString()} MC
+                Apuesta: {bet.toLocaleString()} MC
               </Text>
             )}
           </Animated.View>
         )}
 
-        {/* Controles de apuesta */}
+        {/* Controles ultra compactos */}
         <View style={styles.controls}>
-          <Text style={styles.betTitle}>SELECCIONA TU APUESTA</Text>
-          <View style={styles.betButtons}>
-            {betAmounts.map((amount) => (
-              <TouchableOpacity
-                key={amount}
-                style={[
-                  styles.betButton,
-                  (!canAfford(amount) || spinning) && styles.disabledButton,
-                  selectedBet === amount && styles.selectedBet,
-                ]}
-                onPress={async () => {
-                  if (canAfford(amount) && !spinning) {
-                    setSelectedBet(amount);
-                    await playSound("click");
-                    pulseAnimation();
-                  }
-                }}
-                disabled={!canAfford(amount) || spinning}
-              >
-                <Text style={styles.betButtonText}>{amount}</Text>
-                <Text style={styles.ticketRewardInfo}>Riesgo/Recompensa</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {gameState === 'betting' && (
+            <View style={styles.betContainer}>
+              <Text style={styles.betTitle}>APUESTA</Text>
+              
+              <View style={styles.betAmounts}>
+                {betAmounts.map(amount => (
+                  <TouchableOpacity 
+                    key={amount}
+                    style={[
+                      styles.betAmountButton,
+                      !canAfford(amount) && styles.disabledButton,
+                      bet === amount && styles.selectedBet
+                    ]}
+                    onPress={async () => {
+                      if (canAfford(amount)) {
+                        setBet(amount);
+                        await playSound('click');
+                      }
+                    }}
+                    disabled={!canAfford(amount)}
+                  >
+                    <Text style={styles.betAmountText}>{amount}</Text>
+                    <Text style={styles.ticketRewardInfo}>
+                      +{getTicketRewards(amount, 'low')} tickets
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-          <Text style={styles.currentBet}>
-            {selectedBet > 0
-              ? `Apuesta: ${selectedBet.toLocaleString()} MC`
-              : "Selecciona monto"}
-          </Text>
+              <Text style={styles.currentBet}>
+                {bet > 0 ? `${bet} MC` : 'Selecciona'}
+              </Text>
 
-          <TouchableOpacity
-            style={[
-              styles.spinButton,
-              (selectedBet === 0 || spinning) && styles.disabledButton,
-            ]}
-            onPress={() => selectedBet > 0 && spinWheel(selectedBet)}
-            disabled={selectedBet === 0 || spinning}
-          >
-            <Ionicons name="refresh" size={20} color="#FFF" />
-            <Text style={styles.spinButtonText}>
-              {spinning ? "GIRANDO..." : "GIRAR RUEDA"}
-            </Text>
-          </TouchableOpacity>
+              <View style={styles.predictionContainer}>
+                <TouchableOpacity 
+                  style={[styles.predictionButton, styles.lowButton]}
+                  onPress={() => bet > 0 && placeBet(bet, 'low')}
+                  disabled={bet === 0}
+                >
+                  <Text style={styles.predictionButtonText}>BAJO {"<7"}</Text>
+                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'low')} tickets</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.predictionButton, styles.sevenButton]}
+                  onPress={() => bet > 0 && placeBet(bet, 'seven')}
+                  disabled={bet === 0}
+                >
+                  <Text style={styles.predictionButtonText}>SIETE =7</Text>
+                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'seven')} tickets</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.predictionButton, styles.highButton]}
+                  onPress={() => bet > 0 && placeBet(bet, 'high')}
+                  disabled={bet === 0}
+                >
+                  <Text style={styles.predictionButtonText}>ALTO {">7"}</Text>
+                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'high')} tickets</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
-          {!spinning && result && (
-            <TouchableOpacity
-              style={styles.playAgainButton}
-              onPress={resetGame}
-            >
-              <Ionicons name="play" size={16} color="#FFF" />
-              <Text style={styles.playAgainText}>JUGAR DE NUEVO</Text>
+          {gameState === 'rolling' && (
+            <TouchableOpacity style={styles.rollButton} onPress={() => {}} disabled>
+              <Text style={styles.rollButtonText}>TIRANDO...</Text>
+            </TouchableOpacity>
+          )}
+
+          {gameState === 'result' && (
+            <TouchableOpacity style={styles.playAgainButton} onPress={resetGame}>
+              <Text style={styles.playAgainText}>OTRA VEZ</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Tabla de pagos */}
-        <View style={styles.payouts}>
-          <Text style={styles.payoutsTitle}>TABLA DE PREMIOS Y RIESGOS</Text>
-          <View style={styles.payoutGrid}>
-            {WHEEL_SECTIONS.map((section, index) => (
-              <View key={index} style={styles.payoutItem}>
-                <View
-                  style={[
-                    styles.payoutColor,
-                    { backgroundColor: section.color },
-                  ]}
-                />
-                <View style={styles.payoutInfo}>
-                  <Text
-                    style={[
-                      styles.payoutText,
-                      section.multiplier > 1
-                        ? styles.winText
-                        : section.multiplier === 1
-                        ? styles.neutralText
-                        : styles.loseText,
-                    ]}
-                  >
-                    {section.label}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.payoutMultiplier,
-                      section.multiplier > 1
-                        ? styles.winMultiplier
-                        : section.multiplier === 1
-                        ? styles.neutralMultiplier
-                        : styles.loseMultiplier,
-                    ]}
-                  >
-                    {section.ticketsMultiplier > 1
-                      ? `Gana x${section.ticketsMultiplier}`
-                      : section.ticketsMultiplier === 1
-                      ? "Recupera"
-                      : section.ticketsMultiplier > 0
-                      ? `Pierde ${Math.round(
-                          (1 - section.ticketsMultiplier) * 100
-                        )}%`
-                      : "BUST"}
-                  </Text>
-                </View>
-              </View>
-            ))}
+        {/* Reglas mini */}
+        <View style={styles.rulesContainer}>
+          <View style={styles.ruleItem}>
+            <Text style={styles.ruleTitle}>BAJO {"<7"}</Text>
+            <Text style={styles.ruleMultiplier}>Solo Tickets</Text>
           </View>
-          <Text style={styles.payoutsNote}>
-            Premios en tickets = Apuesta x Multiplicador
-          </Text>
+          <View style={styles.ruleItem}>
+            <Text style={styles.ruleTitle}>SIETE =7</Text>
+            <Text style={styles.ruleMultiplier}>Solo Tickets</Text>
+          </View>
+          <View style={styles.ruleItem}>
+            <Text style={styles.ruleTitle}>ALTO {">7"}</Text>
+            <Text style={styles.ruleMultiplier}>Solo Tickets</Text>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -701,345 +659,329 @@ export default function MoneyWheel({ navigation }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#0A0A0A",
+    backgroundColor: '#0A0A0A',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 15,
-    paddingTop: 10,
-    paddingBottom: 20,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 15,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    paddingHorizontal: 5,
+  },
+  balancesContainer: {
+    flex: 1,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  balanceItem: {
+    alignItems: 'flex-start',
+  },
+  coinsDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    gap: 5,
+    minWidth: 80,
+  },
+  ticketsDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    gap: 5,
+    minWidth: 80,
+  },
+  coinIcon: {
+    width: 14,
+    height: 14,
+    resizeMode: 'contain',
+  },
+  ticketIcon: {
+    width: 14,
+    height: 14,
+    resizeMode: 'contain',
+  },
+  balanceText: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   titleContainer: {
-    alignItems: "center",
-    marginBottom: 20,
+    alignItems: 'center',
+    flex: 1,
+    marginTop: 5,
   },
   title: {
-    color: "#FFD700",
-    fontSize: 24,
-    fontWeight: "bold",
-    textAlign: "center",
-  },
-  subtitle: {
-    color: "#FFF",
-    fontSize: 14,
-    textAlign: "center",
-    opacity: 0.8,
-    marginTop: 5,
-  },
-  wheelContainer: {
-    position: "relative",
-    marginBottom: 20,
-    alignItems: "center",
-  },
-  wheel: {
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "#2b2b2b",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 6,
-    borderColor: "#FFD700",
-    elevation: 10,
-  },
-  wheelInner: {
-    width: 265,
-    height: 265,
-    borderRadius: 132.5,
-    overflow: "hidden",
-    position: "relative",
-  },
-  wheelSection: {
-    position: "absolute",
-    width: "50%",
-    height: "50%",
-    left: "50%",
-    top: 0,
-    transformOrigin: "left bottom",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  sectionContent: {
-    position: "absolute",
-    right: 10,
-    top: "40%",
-    transform: [{ rotate: "45deg" }],
-  },
-  sectionLabel: {
+    color: '#FFD700',
     fontSize: 16,
-    fontWeight: "bold",
-    color: "#000",
-    textAlign: "center",
+    fontWeight: 'bold',
   },
-  wheelCenter: {
-    position: "absolute",
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#FFD700",
-    justifyContent: "center",
-    alignItems: "center",
+  emptySpace: {
+    width: 30,
   },
-  wheelCenterText: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  pointer: {
-    position: "absolute",
-    top: -20,
-    left: "50%",
-    marginLeft: -15,
-    width: 0,
-    height: 0,
-    borderLeftWidth: 15,
-    borderRightWidth: 15,
-    borderBottomWidth: 25,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderBottomColor: "#FFD700",
-  },
-  winningSectionInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    alignSelf: "center",
-    borderWidth: 2,
-  },
-  winningColor: {
-    width: 20,
-    height: 20,
+  diceArea: {
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
     borderRadius: 10,
-    marginRight: 10,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
   },
-  winningText: {
-    color: "#FFF",
-    fontSize: 14,
-    fontWeight: "bold",
+  diceContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  dice: {
+    width: 45,
+    height: 45,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    marginHorizontal: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
+  diceFace: {
+    fontSize: 22,
+  },
+  diceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  total: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   messageContainer: {
-    alignItems: "center",
-    marginVertical: 12,
-    padding: 15,
-    borderRadius: 10,
+    alignItems: 'center',
+    marginVertical: 10,
+    padding: 12,
+    borderRadius: 8,
     borderWidth: 2,
-    minHeight: 60,
-    justifyContent: "center",
+    minHeight: 50,
+    justifyContent: 'center',
   },
-  result: {
-    fontSize: 16,
-    fontWeight: "bold",
-    textAlign: "center",
+  message: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    lineHeight: 16,
   },
   ticketsWonContainer: {
-    alignItems: "center",
     marginTop: 5,
-    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#10B981",
+    borderColor: '#10B981',
   },
   ticketsWonText: {
-    color: "#10B981",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  ticketsCalculation: {
-    color: "#10B981",
-    fontSize: 10,
-    marginTop: 2,
-    opacity: 0.8,
-  },
-  loseInfo: {
-    color: "#EF4444",
+    color: '#10B981',
     fontSize: 12,
-    marginTop: 5,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
   betInfo: {
-    color: "#FFF",
-    fontSize: 12,
+    color: '#FFF',
+    fontSize: 11,
     marginTop: 6,
     opacity: 0.8,
   },
   controls: {
-    alignItems: "center",
-    marginBottom: 20,
+    marginTop: 6,
+    marginBottom: 15,
+  },
+  betContainer: {
+    alignItems: 'center',
   },
   betTitle: {
-    color: "#FFF",
-    fontSize: 14,
-    fontWeight: "bold",
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
     marginBottom: 12,
-    textAlign: "center",
+    textAlign: 'center',
   },
-  betButtons: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
+  betAmounts: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
     marginBottom: 12,
-    gap: 8,
-  },
-  betButton: {
-    backgroundColor: "#2A2A2A",
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#444",
-    minWidth: 70,
-  },
-  selectedBet: {
-    borderColor: "#FFD700",
-    backgroundColor: "rgba(255, 215, 0, 0.1)",
-  },
-  betButtonText: {
-    color: "#FFD700",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  ticketRewardInfo: {
-    color: "#10B981",
-    fontSize: 9,
-    marginTop: 2,
-    fontStyle: "italic",
-    textAlign: "center",
-  },
-  currentBet: {
-    color: "#FFD700",
-    fontSize: 13,
-    fontWeight: "bold",
-    marginBottom: 12,
-    textAlign: "center",
-    backgroundColor: "rgba(139, 0, 0, 0.3)",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#FFD700",
-  },
-  spinButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: "#1D4ED8",
-    gap: 8,
-    marginBottom: 10,
-  },
-  spinButtonText: {
-    color: "#FFF",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  playAgainButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#10B981",
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: "#059669",
     gap: 6,
   },
-  playAgainText: {
-    color: "#FFF",
-    fontWeight: "bold",
-    fontSize: 12,
-  },
-  payouts: {
-    backgroundColor: "rgba(26, 26, 26, 0.9)",
-    padding: 15,
-    borderRadius: 10,
+  betAmountButton: {
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: "#333",
+    borderColor: '#444',
+    minWidth: 60,
   },
-  payoutsTitle: {
-    color: "#FFD700",
-    fontSize: 14,
-    fontWeight: "bold",
-    marginBottom: 10,
-    textAlign: "center",
+  selectedBet: {
+    borderColor: '#FFD700',
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
   },
-  payoutGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
+  betAmountText: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
-  payoutItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    width: "48%",
-    marginBottom: 8,
+  ticketRewardInfo: {
+    color: '#10B981',
+    fontSize: 8,
+    marginTop: 2,
+    fontStyle: 'italic',
+    textAlign: 'center',
   },
-  payoutColor: {
-    width: 16,
-    height: 16,
-    borderRadius: 4,
-    marginRight: 8,
+  currentBet: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    textAlign: 'center',
+    backgroundColor: 'rgba(139, 0, 0, 0.3)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFD700',
   },
-  payoutInfo: {
+  predictionContainer: {
+    width: '100%',
+    gap: 8,
+  },
+  predictionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  lowButton: {
+    backgroundColor: '#DC2626',
+  },
+  sevenButton: {
+    backgroundColor: '#F59E0B',
+  },
+  highButton: {
+    backgroundColor: '#2563EB',
+  },
+  predictionButtonText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 12,
     flex: 1,
   },
-  payoutText: {
+  multiplierText: {
+    color: '#FFD700',
+    fontWeight: 'bold',
+    fontSize: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  rollButton: {
+    backgroundColor: '#6B7280',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: '#4B5563',
+    alignItems: 'center',
+  },
+  rollButtonText: {
+    color: '#FFF',
+    fontWeight: 'bold',
     fontSize: 12,
-    fontWeight: "bold",
   },
-  payoutMultiplier: {
+  playAgainButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: '#059669',
+    alignItems: 'center',
+  },
+  playAgainText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  rulesContainer: {
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  ruleItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  ruleTitle: {
+    color: '#FFF',
     fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 2,
   },
-  winText: {
-    color: "#10B981",
-  },
-  winMultiplier: {
-    color: "#10B981",
-  },
-  neutralText: {
-    color: "#F59E0B",
-  },
-  neutralMultiplier: {
-    color: "#F59E0B",
-  },
-  loseText: {
-    color: "#EF4444",
-  },
-  loseMultiplier: {
-    color: "#EF4444",
-  },
-  payoutsNote: {
-    color: "#10B981",
-    fontSize: 10,
-    textAlign: "center",
-    marginTop: 8,
-    fontStyle: "italic",
+  ruleMultiplier: {
+    color: '#10B981',
+    fontSize: 9,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   disabledButton: {
-    backgroundColor: "#1A1A1A",
-    borderColor: "#333",
+    backgroundColor: '#1A1A1A',
+    borderColor: '#333',
     opacity: 0.5,
   },
   // Estilos para animaciones
   animationContainer: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
     marginLeft: -80,
     marginTop: -60,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 1000,
-    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
     padding: 15,
     borderRadius: 12,
     borderWidth: 3,
@@ -1047,44 +989,44 @@ const styles = StyleSheet.create({
     height: 120,
   },
   winAnimation: {
-    borderColor: "#FFD700",
+    borderColor: '#FFD700',
   },
   loseAnimation: {
-    borderColor: "#EF4444",
+    borderColor: '#EF4444',
   },
   winText: {
-    color: "#FFD700",
+    color: '#FFD700',
     fontSize: 16,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontWeight: 'bold',
+    textAlign: 'center',
     marginTop: 6,
   },
   loseText: {
-    color: "#EF4444",
+    color: '#EF4444',
     fontSize: 16,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontWeight: 'bold',
+    textAlign: 'center',
     marginTop: 6,
   },
   winSubtext: {
-    color: "#FFF",
+    color: '#FFF',
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: '600',
     marginTop: 2,
-    textAlign: "center",
+    textAlign: 'center',
   },
   loseSubtext: {
-    color: "#FFF",
+    color: '#FFF',
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: '600',
     marginTop: 2,
-    textAlign: "center",
+    textAlign: 'center',
   },
   ticketsWonAnimation: {
-    color: "#10B981",
+    color: '#10B981',
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginTop: 4,
-    textAlign: "center",
+    textAlign: 'center',
   },
 });

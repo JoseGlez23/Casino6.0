@@ -10,31 +10,33 @@ import {
   Alert,
   SafeAreaView,
   ScrollView,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
 import { Audio } from "expo-av";
 
-// Secciones de la rueda balanceadas - algunas dan pérdidas
+// Secciones de la rueda CORREGIDAS - ORDEN Y COLORES ACTUALIZADOS
 const WHEEL_SECTIONS = [
-  { label: "x1", multiplier: 1, color: "#FF6B6B", ticketsMultiplier: 1 }, // Rojo - Gana poco
-  { label: "x0.5", multiplier: 0.5, color: "#4ECDC4", ticketsMultiplier: 0.5 }, // Turquesa - Pierde mitad
-  { label: "x5", multiplier: 5, color: "#FFD700", ticketsMultiplier: 5 }, // Amarillo - Gana mucho
-  { label: "x0", multiplier: 0, color: "#95E1D3", ticketsMultiplier: 0 }, // Verde claro - Pierde todo
-  { label: "x2", multiplier: 2, color: "#FF9FF3", ticketsMultiplier: 2 }, // Rosa - Gana normal
+  { label: "x10", multiplier: 10, color: "#54A0FF", ticketsMultiplier: 10 }, // Azul - Gana máximo
   {
     label: "x0.25",
     multiplier: 0.25,
     color: "#FF9F43",
     ticketsMultiplier: 0.25,
-  }, // Naranja - Pierde mucho
-  { label: "x10", multiplier: 10, color: "#54A0FF", ticketsMultiplier: 10 }, // Azul - Gana mucho
-  { label: "BUST", multiplier: 0, color: "#576574", ticketsMultiplier: 0 }, // Gris - Pierde todo
+  }, // Naranja - Pierde 75%
+  { label: "x2", multiplier: 2, color: "#FF9FF3", ticketsMultiplier: 2 }, // Rosa - Gana normal
+  { label: "x0", multiplier: 0, color: "#95E1D3", ticketsMultiplier: 0 }, // Verde claro - Pierde todo
+  { label: "BUST", multiplier: 0, color: "#576574", ticketsMultiplier: 0 }, // Gris oscuro - Pierde todo
+  { label: "x0.5", multiplier: 0.5, color: "#4ECDC4", ticketsMultiplier: 0.5 }, // Turquesa - Pierde mitad
+  { label: "x5", multiplier: 5, color: "#FFD700", ticketsMultiplier: 5 }, // Amarillo - Gana mucho
+  { label: "x1", multiplier: 1, color: "#FF6B6B", ticketsMultiplier: 1 }, // Rojo - Recupera en tickets
 ];
 
-// Hook de sonidos para MoneyWheel
+// Hook de sonidos profesional
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
+  const [currentSound, setCurrentSound] = useState(null);
 
   const loadSounds = async () => {
     try {
@@ -47,95 +49,104 @@ const useGameSounds = () => {
       });
 
       const soundObjects = {};
-
       const soundTypes = [
-        { key: "wheel", file: require("../../assets/sounds/wheel.mp3") },
         { key: "click", file: require("../../assets/sounds/click.mp3") },
         { key: "coin", file: require("../../assets/sounds/coin.mp3") },
         { key: "error", file: require("../../assets/sounds/error.mp3") },
         { key: "success", file: require("../../assets/sounds/success.mp3") },
+        { key: "slots", file: require("../../assets/sounds/slots.mp3") },
       ];
 
       for (const { key, file } of soundTypes) {
         try {
-          const soundObject = new Audio.Sound();
-          await soundObject.loadAsync(file);
-          soundObjects[key] = soundObject;
+          const { sound } = await Audio.Sound.createAsync(file);
+          soundObjects[key] = sound;
         } catch (error) {
-          console.log(`❌ Error cargando sonido ${key}:`, error);
+          console.log(`Error cargando sonido ${key}:`, error);
         }
       }
 
       setSounds(soundObjects);
     } catch (error) {
-      console.log("❌ Error inicializando sistema de sonido:", error);
+      console.log("Error inicializando sonidos:", error);
     }
   };
 
-  const playSound = async (type) => {
+  const playSound = async (type, duration = null) => {
     try {
-      let soundKey;
-      switch (type) {
-        case "win":
-          soundKey = "success";
-          break;
-        case "lose":
-          soundKey = "error";
-          break;
-        case "wheel":
-          soundKey = "wheel";
-          break;
-        case "coin":
-          soundKey = "coin";
-          break;
-        case "click":
-        default:
-          soundKey = "click";
-      }
+      const soundMap = {
+        win: "success",
+        lose: "error",
+        spin: "slots",
+        coin: "coin",
+        click: "click",
+      };
+
+      const soundKey = soundMap[type] || "click";
 
       if (sounds[soundKey]) {
-        await sounds[soundKey].replayAsync();
-      } else {
-        playVibration(type);
+        if (currentSound) {
+          try {
+            await currentSound.stopAsync();
+          } catch (e) {}
+        }
+
+        const sound = sounds[soundKey];
+        setCurrentSound(sound);
+
+        await sound.replayAsync();
+
+        if (duration) {
+          setTimeout(async () => {
+            try {
+              await sound.stopAsync();
+              setCurrentSound(null);
+            } catch (error) {
+              console.log("Error deteniendo sonido:", error);
+            }
+          }, duration);
+        }
       }
     } catch (error) {
-      playVibration(type);
+      const vibrationMap = {
+        win: [0, 100, 50, 100],
+        lose: [0, 300, 100, 300],
+        spin: 100,
+        coin: 50,
+        click: 25,
+      };
+      Vibration.vibrate(vibrationMap[type] || 25);
     }
   };
 
-  const playVibration = (type) => {
-    switch (type) {
-      case "win":
-        Vibration.vibrate([0, 100, 50, 100, 50, 100]);
-        break;
-      case "lose":
-        Vibration.vibrate([0, 300, 100, 300]);
-        break;
-      case "wheel":
-        Vibration.vibrate([0, 200, 100, 200]);
-        break;
-      case "coin":
-        Vibration.vibrate(20);
-        break;
-      case "click":
-      default:
-        Vibration.vibrate(15);
+  const stopSound = async () => {
+    if (currentSound) {
+      try {
+        await currentSound.stopAsync();
+        setCurrentSound(null);
+      } catch (error) {
+        console.log("Error deteniendo sonido:", error);
+      }
     }
   };
 
   useEffect(() => {
     loadSounds();
-
     return () => {
-      Object.values(sounds).forEach((sound) => {
-        if (sound) {
-          sound.unloadAsync();
-        }
-      });
+      Object.values(sounds).forEach((sound) => sound?.unloadAsync());
     };
   }, []);
 
-  return playSound;
+  return { playSound, stopSound };
+};
+
+// Función para calcular tickets (MISMA LÓGICA QUE LA RULETA)
+const getTicketRewards = (betAmount, multiplier = 1) => {
+  // Base tickets basado en la apuesta y multiplicador
+  const baseTickets = Math.floor(betAmount * 0.1); // 10% de la apuesta base
+  const multiplierBonus = Math.floor((multiplier - 1) * betAmount * 0.05); // Bonus por multiplicador
+
+  return Math.max(baseTickets + multiplierBonus, 1); // Mínimo 1 ticket
 };
 
 // Componente de animación de victoria
@@ -188,7 +199,9 @@ const WinAnimation = ({ show, ticketsWon = 0 }) => {
       <Text style={styles.winText}>¡GANASTE!</Text>
       <Text style={styles.winSubtext}>Ganas tickets</Text>
       {ticketsWon > 0 && (
-        <Text style={styles.ticketsWonAnimation}>+{ticketsWon} Tickets</Text>
+        <View style={styles.ticketsWonAnimationContainer}>
+          <Text style={styles.ticketsWonAnimation}>+{ticketsWon} Tickets</Text>
+        </View>
       )}
     </Animated.View>
   );
@@ -244,10 +257,15 @@ const LoseAnimation = ({ show, message = "Sin premio esta vez" }) => {
   );
 };
 
-// Componente para cada sección de la rueda
+// Componente mejorado para cada sección de la rueda
 const WheelSection = ({ section, index, totalSections }) => {
   const angle = (360 / totalSections) * index;
   const sectionAngle = 360 / totalSections;
+
+  const getTextColor = (backgroundColor) => {
+    const lightColors = ["#FFD700", "#95E1D3", "#4ECDC4"];
+    return lightColors.includes(backgroundColor) ? "#000000" : "#FFFFFF";
+  };
 
   return (
     <View
@@ -264,7 +282,7 @@ const WheelSection = ({ section, index, totalSections }) => {
           styles.sectionLabel,
           {
             transform: [{ rotate: `${-angle - sectionAngle / 2}deg` }],
-            color: section.multiplier <= 1 ? "#000" : "#000",
+            color: getTextColor(section.color),
           },
         ]}
       >
@@ -277,7 +295,7 @@ const WheelSection = ({ section, index, totalSections }) => {
 export default function MoneyWheel({ navigation }) {
   const { manekiCoins, tickets, subtractCoins, addTickets, canAfford } =
     useCoins();
-  const playSound = useGameSounds();
+  const { playSound, stopSound } = useGameSounds();
 
   const [bet, setBet] = useState(0);
   const [spinning, setSpinning] = useState(false);
@@ -338,10 +356,9 @@ export default function MoneyWheel({ navigation }) {
     }, 3000);
   };
 
-  // Función para calcular probabilidades balanceadas - más pérdidas
+  // Función para calcular probabilidades balanceadas (8 secciones)
   const getWeightedRandomSection = () => {
-    // Probabilidades: 4 pérdidas, 4 ganancias pero con diferentes valores
-    const weights = [0.2, 0.15, 0.08, 0.12, 0.2, 0.1, 0.05, 0.1];
+    const weights = [0.06, 0.08, 0.18, 0.14, 0.1, 0.16, 0.1, 0.18];
     const random = Math.random();
     let cumulativeWeight = 0;
 
@@ -351,9 +368,10 @@ export default function MoneyWheel({ navigation }) {
         return i;
       }
     }
-    return 7; // BUST como fallback
+    return 7; // x1 como fallback
   };
 
+  // FUNCIÓN SPINWHEEL ACTUALIZADA CON SISTEMA DE TICKETS
   const spinWheel = async (betAmount) => {
     if (!canAfford(betAmount) || spinning) {
       await playSound("error");
@@ -364,12 +382,6 @@ export default function MoneyWheel({ navigation }) {
       return;
     }
 
-    setBet(betAmount);
-    setSelectedBet(betAmount);
-    await subtractCoins(betAmount, `Apuesta en Money Wheel`);
-    await playSound("coin");
-    pulseAnimation();
-
     setSpinning(true);
     setResult("");
     setTicketsWon(0);
@@ -377,61 +389,97 @@ export default function MoneyWheel({ navigation }) {
     setShowLoseAnimation(false);
     setWinningSection(null);
     setLoseMessage("");
+    setBet(betAmount);
+    setSelectedBet(betAmount);
 
-    // Animación de la rueda girando
-    await playSound("wheel");
+    await subtractCoins(betAmount, `Apuesta en Money Wheel`);
+    await playSound("coin");
+    pulseAnimation();
 
-    const extraRotations = 4 + Math.random() * 2;
+    const spinDuration = 4000;
+    await playSound("spin", spinDuration);
+
+    // PRIMERO determinamos qué sección debe ganar (basado en probabilidades)
+    const winningIndex = getWeightedRandomSection();
+    console.log(
+      "Índice ganador calculado:",
+      winningIndex,
+      WHEEL_SECTIONS[winningIndex].label
+    );
+
+    // CÁLCULO CORREGIDO DE LA ROTACIÓN
     const sectionAngle = 360 / WHEEL_SECTIONS.length;
 
-    // Usar probabilidades balanceadas
-    const winningIndex = getWeightedRandomSection();
-    setWinningSection(winningIndex);
+    // La flecha está en la parte superior (0 grados)
+    // Queremos que la sección ganadora termine justo en la flecha
+    // Cada sección ocupa 45 grados (360/8), y queremos que el centro quede en la flecha
+    const targetSectionCenter = winningIndex * sectionAngle + sectionAngle / 2;
 
-    const finalRotation = extraRotations * 360 + winningIndex * sectionAngle;
+    // Rotación completa más la posición para que la sección quede en la flecha
+    const extraRotations = 5; // Vueltas completas para efecto dramático
+    const finalRotation = extraRotations * 360 + (360 - targetSectionCenter);
 
-    Animated.timing(spinAnimation, {
-      toValue: finalRotation,
-      duration: 3500,
-      useNativeDriver: true,
-    }).start(async () => {
-      const winMultiplier = WHEEL_SECTIONS[winningIndex].multiplier;
-      const ticketsMultiplier = WHEEL_SECTIONS[winningIndex].ticketsMultiplier;
-      const ticketsReward = Math.floor(betAmount * ticketsMultiplier);
+    console.log("Rotación final calculada:", finalRotation, "grados");
 
-      // Determinar si es victoria o derrota
-      if (ticketsMultiplier > 1) {
-        // Victoria buena (x2, x5, x10)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} MULTIPLICADOR!`);
-        await playSound("win");
-        triggerWinAnimation(ticketsReward);
-        await addTickets(
-          ticketsReward,
-          `Ganancia en Money Wheel - ${WHEEL_SECTIONS[winningIndex].label}`
-        );
-      } else if (ticketsMultiplier === 1) {
-        // Victoria mínima (solo recupera)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} - Recuperas!`);
-        await playSound("win");
-        triggerWinAnimation(ticketsReward);
-        await addTickets(ticketsReward, `Recuperación en Money Wheel`);
-      } else if (ticketsMultiplier > 0 && ticketsMultiplier < 1) {
-        // Pérdida parcial
-        const lostPercentage = Math.round((1 - ticketsMultiplier) * 100);
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label} - Pérdida!`);
-        await playSound("lose");
-        triggerLoseAnimation(`Pierdes el ${lostPercentage}% de tu apuesta`);
-        // No se agregan tickets para pérdidas parciales
-      } else {
-        // Pérdida total (BUST o x0)
-        setResult(`¡${WHEEL_SECTIONS[winningIndex].label.toUpperCase()}!`);
-        await playSound("lose");
-        triggerLoseAnimation("Pierdes toda tu apuesta");
-        // No se agregan tickets
-      }
-
-      setSpinning(false);
+    const animationPromise = new Promise((resolve) => {
+      Animated.timing(spinAnimation, {
+        toValue: finalRotation,
+        duration: spinDuration,
+        useNativeDriver: true,
+      }).start(() => {
+        resolve(winningIndex);
+      });
     });
+
+    const actualWinningIndex = await animationPromise;
+    setWinningSection(actualWinningIndex);
+
+    const winMultiplier = WHEEL_SECTIONS[actualWinningIndex].multiplier;
+    const ticketsMultiplier =
+      WHEEL_SECTIONS[actualWinningIndex].ticketsMultiplier;
+
+    // CALCULAR TICKETS GANADOS (USANDO LA MISMA LÓGICA QUE LA RULETA)
+    const ticketsReward = getTicketRewards(betAmount, ticketsMultiplier);
+
+    console.log(
+      "Resultado final:",
+      actualWinningIndex,
+      WHEEL_SECTIONS[actualWinningIndex].label,
+      "Tickets:",
+      ticketsReward
+    );
+
+    // Determinar el mensaje y efectos según el resultado
+    if (ticketsMultiplier > 1) {
+      setResult(`¡${WHEEL_SECTIONS[actualWinningIndex].label} MULTIPLICADOR!`);
+      await playSound("win");
+      triggerWinAnimation(ticketsReward);
+      await addTickets(
+        ticketsReward,
+        `Ganancia en Money Wheel - ${WHEEL_SECTIONS[actualWinningIndex].label}`
+      );
+    } else if (ticketsMultiplier === 1) {
+      setResult(
+        `¡${WHEEL_SECTIONS[actualWinningIndex].label} - Recuperas en tickets!`
+      );
+      await playSound("win");
+      triggerWinAnimation(ticketsReward);
+      await addTickets(ticketsReward, `Recuperación en Money Wheel`);
+    } else if (ticketsMultiplier > 0 && ticketsMultiplier < 1) {
+      const lostPercentage = Math.round((1 - ticketsMultiplier) * 100);
+      setResult(`¡${WHEEL_SECTIONS[actualWinningIndex].label} - Pérdida!`);
+      await playSound("lose");
+      triggerLoseAnimation(`Pierdes el ${lostPercentage}% de tu apuesta`);
+      if (ticketsReward > 0) {
+        await addTickets(ticketsReward, `Recuperación parcial en Money Wheel`);
+      }
+    } else {
+      setResult(`¡${WHEEL_SECTIONS[actualWinningIndex].label.toUpperCase()}!`);
+      await playSound("lose");
+      triggerLoseAnimation("Pierdes toda tu apuesta");
+    }
+
+    setSpinning(false);
   };
 
   const resetGame = async () => {
@@ -460,13 +508,39 @@ export default function MoneyWheel({ navigation }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Título del juego */}
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>💰 MONEY WHEEL</Text>
-          <Text style={styles.subtitle}>Gira y prueba tu suerte</Text>
+        {/* Header con saldo y tickets - MISMA ESTRUCTURA QUE LA RULETA */}
+        <View style={styles.header}>
+          <View style={styles.balancesContainer}>
+            <View style={styles.balanceRow}>
+              <View style={styles.balanceItem}>
+                <View style={styles.coinsDisplay}>
+                  <Image
+                    source={require("../../assets/dinero.png")}
+                    style={styles.coinIcon}
+                  />
+                  <Text style={styles.balanceText}>
+                    {manekiCoins.toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.balanceItem}>
+                <View style={styles.ticketsDisplay}>
+                  <Image
+                    source={require("../../assets/TICKET.png")}
+                    style={styles.ticketIcon}
+                  />
+                  <Text style={styles.balanceText}>
+                    {tickets.toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.emptySpace} />
         </View>
 
-        {/* Rueda del dinero */}
         <View style={styles.wheelContainer}>
           <Animated.View
             style={[styles.wheel, { transform: [{ rotate: spinRotation }] }]}
@@ -485,10 +559,10 @@ export default function MoneyWheel({ navigation }) {
               <Text style={styles.wheelCenterText}>💰</Text>
             </View>
           </Animated.View>
+
           <View style={styles.pointer} />
         </View>
 
-        {/* Información de sección ganadora */}
         {winningSection !== null && !spinning && (
           <View
             style={[
@@ -511,21 +585,12 @@ export default function MoneyWheel({ navigation }) {
               ]}
             />
             <Text style={styles.winningText}>
-              {WHEEL_SECTIONS[winningSection].multiplier > 1
-                ? `Ganas: x${WHEEL_SECTIONS[winningSection].multiplier}`
-                : WHEEL_SECTIONS[winningSection].multiplier === 1
-                ? `Recuperas: x${WHEEL_SECTIONS[winningSection].multiplier}`
-                : WHEEL_SECTIONS[winningSection].multiplier > 0
-                ? `Pierdes: ${Math.round(
-                    (1 - WHEEL_SECTIONS[winningSection].multiplier) * 100
-                  )}%`
-                : "Pierdes: 100%"}
+              Sección: {WHEEL_SECTIONS[winningSection].label}
             </Text>
           </View>
         )}
 
-        {/* Mensaje de resultado */}
-        {result && (
+        {result && !spinning && (
           <Animated.View
             style={[
               styles.messageContainer,
@@ -565,22 +630,12 @@ export default function MoneyWheel({ navigation }) {
               <View style={styles.ticketsWonContainer}>
                 <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets</Text>
                 <Text style={styles.ticketsCalculation}>
-                  ({selectedBet} x{" "}
-                  {WHEEL_SECTIONS[winningSection]?.ticketsMultiplier})
+                  ({selectedBet} MC x{" "}
+                  {WHEEL_SECTIONS[winningSection]?.ticketsMultiplier}{" "}
+                  multiplicador)
                 </Text>
               </View>
             )}
-            {selectedBet > 0 &&
-              WHEEL_SECTIONS[winningSection]?.ticketsMultiplier < 1 && (
-                <Text style={styles.loseInfo}>
-                  Recibes:{" "}
-                  {Math.floor(
-                    selectedBet *
-                      WHEEL_SECTIONS[winningSection]?.ticketsMultiplier
-                  )}{" "}
-                  tickets
-                </Text>
-              )}
             {selectedBet > 0 && (
               <Text style={styles.betInfo}>
                 Apuesta: {selectedBet.toLocaleString()} MC
@@ -589,7 +644,6 @@ export default function MoneyWheel({ navigation }) {
           </Animated.View>
         )}
 
-        {/* Controles de apuesta */}
         <View style={styles.controls}>
           <Text style={styles.betTitle}>SELECCIONA TU APUESTA</Text>
           <View style={styles.betButtons}>
@@ -611,7 +665,9 @@ export default function MoneyWheel({ navigation }) {
                 disabled={!canAfford(amount) || spinning}
               >
                 <Text style={styles.betButtonText}>{amount}</Text>
-                <Text style={styles.ticketRewardInfo}>Riesgo/Recompensa</Text>
+                <Text style={styles.ticketRewardInfo}>
+                  +{getTicketRewards(amount, 2)} tickets
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -647,7 +703,6 @@ export default function MoneyWheel({ navigation }) {
           )}
         </View>
 
-        {/* Tabla de pagos */}
         <View style={styles.payouts}>
           <Text style={styles.payoutsTitle}>TABLA DE PREMIOS Y RIESGOS</Text>
           <View style={styles.payoutGrid}>
@@ -685,19 +740,22 @@ export default function MoneyWheel({ navigation }) {
                     {section.ticketsMultiplier > 1
                       ? `Gana x${section.ticketsMultiplier}`
                       : section.ticketsMultiplier === 1
-                      ? "Recupera"
+                      ? "Recupera en tickets"
                       : section.ticketsMultiplier > 0
                       ? `Pierde ${Math.round(
                           (1 - section.ticketsMultiplier) * 100
                         )}%`
-                      : "BUST"}
+                      : "BUST - Pierde todo"}
+                  </Text>
+                  <Text style={styles.ticketRewardSmall}>
+                    +{getTicketRewards(100, section.ticketsMultiplier)} tickets
                   </Text>
                 </View>
               </View>
             ))}
           </View>
           <Text style={styles.payoutsNote}>
-            Premios en tickets = Apuesta x Multiplicador
+            Premios en tickets = Apuesta x Multiplicador + Bonus
           </Text>
         </View>
       </ScrollView>
@@ -719,22 +777,86 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 20,
   },
-  titleContainer: {
+  // Header con saldo y tickets - MISMA ESTRUCTURA QUE LA RULETA
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 15,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  balancesContainer: {
+    flex: 1,
+  },
+  balanceRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  balanceItem: {
+    alignItems: "flex-start",
+  },
+  coinsDisplay: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
+    backgroundColor: "#1A1A1A",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    gap: 5,
+    minWidth: 80,
+  },
+  ticketsDisplay: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1A1A1A",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: "#10B981",
+    gap: 5,
+    minWidth: 80,
+  },
+  coinIcon: {
+    width: 14,
+    height: 14,
+    resizeMode: "contain",
+  },
+  ticketIcon: {
+    width: 14,
+    height: 14,
+    resizeMode: "contain",
+  },
+  balanceText: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  titleContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    top: 0,
   },
   title: {
     color: "#FFD700",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "bold",
-    textAlign: "center",
+    letterSpacing: 1,
   },
   subtitle: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 12,
     textAlign: "center",
     opacity: 0.8,
-    marginTop: 5,
+    marginTop: 2,
+  },
+  emptySpace: {
+    width: 80,
   },
   wheelContainer: {
     position: "relative",
@@ -751,6 +873,10 @@ const styles = StyleSheet.create({
     borderWidth: 6,
     borderColor: "#FFD700",
     elevation: 10,
+    shadowColor: "#FFD700",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
   },
   wheelInner: {
     width: 265,
@@ -783,6 +909,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFD700",
     justifyContent: "center",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   wheelCenterText: {
     fontSize: 24,
@@ -790,17 +921,18 @@ const styles = StyleSheet.create({
   },
   pointer: {
     position: "absolute",
-    top: -20,
+    top: -5,
     left: "50%",
     marginLeft: -15,
     width: 0,
     height: 0,
     borderLeftWidth: 15,
     borderRightWidth: 15,
-    borderBottomWidth: 25,
+    borderTopWidth: 25,
     borderLeftColor: "transparent",
     borderRightColor: "transparent",
-    borderBottomColor: "#FFD700",
+    borderTopColor: "#FFD700",
+    zIndex: 10,
   },
   winningSectionInfo: {
     flexDirection: "row",
@@ -857,12 +989,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     opacity: 0.8,
   },
-  loseInfo: {
-    color: "#EF4444",
-    fontSize: 12,
-    marginTop: 5,
-    fontWeight: "bold",
-  },
   betInfo: {
     color: "#FFF",
     fontSize: 12,
@@ -912,6 +1038,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontStyle: "italic",
     textAlign: "center",
+    fontWeight: "bold",
   },
   currentBet: {
     color: "#FFD700",
@@ -1000,6 +1127,12 @@ const styles = StyleSheet.create({
   payoutMultiplier: {
     fontSize: 10,
   },
+  ticketRewardSmall: {
+    color: "#10B981",
+    fontSize: 8,
+    fontWeight: "bold",
+    marginTop: 1,
+  },
   winText: {
     color: "#10B981",
   },
@@ -1030,7 +1163,6 @@ const styles = StyleSheet.create({
     borderColor: "#333",
     opacity: 0.5,
   },
-  // Estilos para animaciones
   animationContainer: {
     position: "absolute",
     top: "50%",
@@ -1081,11 +1213,19 @@ const styles = StyleSheet.create({
     marginTop: 2,
     textAlign: "center",
   },
+  ticketsWonAnimationContainer: {
+    marginTop: 5,
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#10B981",
+  },
   ticketsWonAnimation: {
     color: "#10B981",
     fontSize: 12,
     fontWeight: "bold",
-    marginTop: 4,
     textAlign: "center",
   },
 });

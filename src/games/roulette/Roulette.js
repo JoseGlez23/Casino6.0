@@ -76,7 +76,9 @@ const useGameSounds = () => {
       if (sounds[soundKey]) {
         // Detener sonido actual si existe
         if (currentSound) {
-          await currentSound.stopAsync();
+          try {
+            await currentSound.stopAsync();
+          } catch (e) {}
         }
 
         const sound = sounds[soundKey];
@@ -435,9 +437,18 @@ export default function Roulette({ navigation }) {
   const [betStep, setBetStep] = useState("amount");
   const [ticketsWon, setTicketsWon] = useState(0);
 
+  // New states for marking the result and index
+  const [landedNumber, setLandedNumber] = useState(null);
+  const [landedIndex, setLandedIndex] = useState(null);
+
   const wheelAnim = useRef(new Animated.Value(0)).current;
+  // ballAnim kept for compatibility (not used for visible ball orbit)
   const ballAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // pointerBallAnim will animate the new ball that lives at the pointer position
+  const pointerBallAnim = useRef(new Animated.Value(0)).current;
+  const pointerBallLoopRef = useRef(null);
 
   // Configuración de la ruleta
   const wheelSize = Math.min(screenWidth - 40, 320);
@@ -445,8 +456,9 @@ export default function Roulette({ navigation }) {
   const wheelRadius = wheelSize / 2 - 10;
   const ballTrackRadius = wheelRadius - 15;
   const segmentAngle = (2 * Math.PI) / SEGMENTS.length;
+  const segmentDegrees = 360 / SEGMENTS.length;
 
-  // Función para dibujar segmentos - MISMA QUE AMERICANA
+  // Función para dibujar segmentos
   const createSegmentPath = (index) => {
     const startAngle = index * segmentAngle - Math.PI / 2;
     const endAngle = (index + 1) * segmentAngle - Math.PI / 2;
@@ -500,6 +512,7 @@ export default function Roulette({ navigation }) {
       return;
     }
 
+    // Al seleccionar tipo, descontamos la apuesta
     subtractCoins(betAmount, `Apuesta ${BET_TYPES[type].label}`);
     setBetType(type);
     setSelectedNumber(number);
@@ -517,44 +530,110 @@ export default function Roulette({ navigation }) {
     animatePulse();
   };
 
+  // Animación de la bola en la posición del puntero:
+  const startPointerBallLoop = () => {
+    // pequeña vibración/oscillación mientras gira la rueda
+    pointerBallLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pointerBallAnim, {
+          toValue: -6,
+          duration: 220,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pointerBallAnim, {
+          toValue: 0,
+          duration: 220,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pointerBallLoopRef.current.start();
+  };
+
+  const stopPointerBallLoopAndBounce = () => {
+    try {
+      pointerBallLoopRef.current?.stop();
+    } catch (e) {}
+    // Al caer: pequeño "drop" -> rebote
+    Animated.sequence([
+      Animated.timing(pointerBallAnim, {
+        toValue: 6,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.spring(pointerBallAnim, {
+        toValue: 0,
+        friction: 4,
+        tension: 120,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
   // Girar ruleta
   const spinWheel = async () => {
     if (spinning || !betAmount || !betType) return;
 
     setSpinning(true);
+    setLandedNumber(null);
+    setLandedIndex(null);
 
-    // Duración del giro (5 segundos)
+    // Duración del giro (en ms)
     const spinDuration = 5000;
 
     // Reproducir sonido de giro por la duración completa
     await playSound("spin", spinDuration);
 
-    const spins = 5 + Math.random() * 3;
+    // Elegimos el índice ganador aleatoriamente
     const winningIndex = Math.floor(Math.random() * SEGMENTS.length);
     const winningNumber = SEGMENTS[winningIndex].num;
 
-    const totalDegrees = spins * 360 + winningIndex * (360 / SEGMENTS.length);
+    // Número de vueltas completas para la rueda (aleatorio para naturalidad)
+    const spins = 4 + Math.floor(Math.random() * 4); // entre 4 y 7 vueltas
+    // Para la bola, más vueltas en sentido contrario para simular física
+    const ballSpins = spins * 1.8;
+
+    // --- CÁLCULO EXACTO PARA QUE EL NÚMERO GANADOR QUEDE BAJO EL PUNTERO ----
+    // rotationOffset: cantidad en grados para alinear el medio del segmento con el tope (-90°)
+    const rotationOffset =
+      (360 - ((winningIndex + 0.5) * segmentDegrees) % 360) % 360;
+
+    const wheelTo = spins * 360 + rotationOffset;
+    const ballTo = -Math.round(ballSpins * 360) - 90;
 
     // Reiniciar animaciones
     wheelAnim.setValue(0);
     ballAnim.setValue(0);
+    pointerBallAnim.setValue(0);
 
+    // iniciar oscilación de la bola en el puntero (reemplaza el triángulo)
+    startPointerBallLoop();
+
+    // Ejecutar animaciones en paralelo; la bola (simulada) termina un poco antes que la rueda
     Animated.parallel([
-      // Animación de la rueda
       Animated.timing(wheelAnim, {
-        toValue: totalDegrees,
-        duration: spinDuration,
+        toValue: wheelTo,
+        duration: spinDuration + 300, // rueda termina un poco después
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      // Animación de la bola - CORREGIDA: gira en sentido contrario y más rápido
       Animated.timing(ballAnim, {
-        toValue: -totalDegrees * 1.5, // Sentido contrario y más rápido
-        duration: spinDuration - 200, // Termina un poco antes
+        toValue: ballTo,
+        duration: spinDuration - 300, // sólo interno/no visible
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start(async () => {
+      // Parar la oscilación y hacer bounce
+      stopPointerBallLoopAndBounce();
+
+      // Mostrar número y resaltar segmento
+      setLandedNumber(winningNumber);
+      setLandedIndex(winningIndex);
+
       // Calcular ganancia
       const betConfig = BET_TYPES[betType];
       let winAmount = 0;
@@ -603,7 +682,7 @@ export default function Roulette({ navigation }) {
         ...prev.slice(0, 5),
       ]);
 
-      // Resetear juego
+      // Resetear juego después de mostrar resultado (dejamos resalte visible un rato)
       setTimeout(() => {
         setBetAmount(0);
         setBetType(null);
@@ -611,6 +690,12 @@ export default function Roulette({ navigation }) {
         setBetStep("amount");
         setSpinning(false);
         setTicketsWon(0);
+
+        // dejamos landedNumber/landedIndex unos momentos más para que el usuario vea el resultado
+        setTimeout(() => {
+          setLandedNumber(null);
+          setLandedIndex(null);
+        }, 1200);
       }, 1500);
     });
   };
@@ -636,8 +721,14 @@ export default function Roulette({ navigation }) {
   });
 
   const ballRotation = ballAnim.interpolate({
-    inputRange: [0, 360],
-    outputRange: ["0deg", "360deg"],
+    inputRange: [-360, 0, 360],
+    outputRange: ["-360deg", "0deg", "360deg"],
+  });
+
+  // pointerBall translateY for the pointer ball (visible)
+  const pointerBallTranslateY = pointerBallAnim.interpolate({
+    inputRange: [-20, 20],
+    outputRange: [-20, 20],
   });
 
   // Modal de selección de números
@@ -690,12 +781,10 @@ export default function Roulette({ navigation }) {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Header profesional con saldo y tickets - MISMA ESTRUCTURA QUE AMERICANA */}
+        {/* Header profesional con saldo y tickets */}
         <View style={styles.header}>
-          {/* Saldo y Tickets al lado izquierdo */}
           <View style={styles.balancesContainer}>
             <View style={styles.balanceRow}>
-              {/* Saldo */}
               <View style={styles.balanceItem}>
                 <View style={styles.coinsDisplay}>
                   <Image
@@ -708,7 +797,6 @@ export default function Roulette({ navigation }) {
                 </View>
               </View>
 
-              {/* Tickets */}
               <View style={styles.balanceItem}>
                 <View style={styles.ticketsDisplay}>
                   <Image
@@ -723,12 +811,10 @@ export default function Roulette({ navigation }) {
             </View>
           </View>
 
-          {/* Título centrado */}
           <View style={styles.titleContainer}>
             <Text style={styles.title}></Text>
           </View>
 
-          {/* Espacio vacío para balancear el diseño */}
           <View style={styles.emptySpace} />
         </View>
 
@@ -748,7 +834,7 @@ export default function Roulette({ navigation }) {
           </View>
         )}
 
-        {/* Selector de cantidad - Solo se muestra en paso 1 */}
+        {/* Selector de cantidad */}
         {betStep === "amount" && (
           <View style={styles.betSelector}>
             <Text style={styles.sectionTitle}>SELECCIONE SU APUESTA</Text>
@@ -782,7 +868,7 @@ export default function Roulette({ navigation }) {
           </View>
         )}
 
-        {/* Selector de tipo de apuesta - Solo se muestra en paso 2 */}
+        {/* Selector de tipo de apuesta */}
         {betStep === "type" && (
           <View style={styles.betTypeSelector}>
             <Text style={styles.sectionTitle}>SELECCIONE TIPO DE APUESTA</Text>
@@ -818,7 +904,7 @@ export default function Roulette({ navigation }) {
           </View>
         )}
 
-        {/* Ruleta - MISMA ESTRUCTURA QUE AMERICANA PERO CON COLORES AZULES */}
+        {/* Ruleta */}
         <View style={styles.wheelSection}>
           <View
             style={[
@@ -852,12 +938,7 @@ export default function Roulette({ navigation }) {
             >
               <Svg width={wheelSize} height={wheelSize}>
                 {/* Fondo */}
-                <Circle
-                  cx={center}
-                  cy={center}
-                  r={wheelRadius}
-                  fill="#1a1a1a"
-                />
+                <Circle cx={center} cy={center} r={wheelRadius} fill="#1a1a1a" />
 
                 {/* Segmentos */}
                 {SEGMENTS.map((segment, index) => (
@@ -871,26 +952,32 @@ export default function Roulette({ navigation }) {
                         ? "#1F2937"
                         : "#059669"
                     }
-                    stroke="#0F0F0F"
-                    strokeWidth={1}
+                    stroke={
+                      // Si es el segmento ganador (landedIndex), lo resaltamos con borde claro
+                      index === landedIndex ? "#FFD54D" : "#0F0F0F"
+                    }
+                    strokeWidth={index === landedIndex ? 3 : 1}
                   />
                 ))}
 
-                {/* Números - POSICIONAMIENTO CORREGIDO COMO AMERICANA */}
+                {/* Números */}
                 {SEGMENTS.map((segment, index) => {
                   // Calcular el ángulo del centro del segmento
                   const midAngle =
                     index * segmentAngle + segmentAngle / 2 - Math.PI / 2;
                   const textRadius = wheelRadius - 25; // Ajustado para mejor posicionamiento
 
+                  // Si es el segmento ganador, le cambiamos color o tamaño para resaltar
+                  const isLanded = index === landedIndex;
+
                   return (
                     <SvgText
                       key={index}
                       x={center + textRadius * Math.cos(midAngle)}
                       y={center + textRadius * Math.sin(midAngle)}
-                      fontSize={11}
+                      fontSize={isLanded ? 13 : 11}
                       fontWeight="bold"
-                      fill="#FFFFFF"
+                      fill={isLanded ? "#FFF59D" : "#FFFFFF"}
                       textAnchor="middle"
                       alignmentBaseline="middle"
                       transform={`rotate(${midAngle * (180 / Math.PI) + 90}, ${
@@ -907,21 +994,22 @@ export default function Roulette({ navigation }) {
               </Svg>
             </Animated.View>
 
-            {/* Bola animada - CORREGIDA: posición y rotación */}
+            {/* --- NUEVO: Bola blanca en la posición del puntero (reemplaza el triángulo) --- */}
             <Animated.View
               style={[
-                styles.ball,
+                styles.pointerBall,
                 {
-                  transform: [
-                    { rotate: ballRotation },
-                    { translateX: ballTrackRadius },
-                  ],
+                  transform: [{ translateY: pointerBallTranslateY }],
                 },
               ]}
             />
 
-            {/* Puntero */}
-            <View style={styles.pointer} />
+            {/* Indicador de número caído (sobre el puntero) */}
+            {landedNumber !== null && (
+              <View style={styles.resultBadge}>
+                <Text style={styles.resultBadgeText}>{landedNumber}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -1173,35 +1261,41 @@ const styles = StyleSheet.create({
     position: "absolute",
     overflow: "hidden",
   },
-  ball: {
+  // Estilo de la bola que ahora vive en la posición del puntero
+  pointerBall: {
     position: "absolute",
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    top: 8,
+    alignSelf: "center",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: "#FFFFFF",
-    top: "50%",
-    left: "50%",
-    marginLeft: -8,
-    marginTop: -8,
     elevation: 10,
-    shadowColor: "#00BFFF", // AZUL en lugar de dorado
+    shadowColor: "#00BFFF",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.8,
     shadowRadius: 4,
-    zIndex: 10,
+    zIndex: 30,
+    borderWidth: 1,
+    borderColor: "#111827",
   },
-  pointer: {
+  // --- Eliminado el triángulo puntero; ahora la bola es el puntero ---
+  resultBadge: {
     position: "absolute",
-    top: 8,
-    width: 0,
-    height: 0,
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderBottomWidth: 16,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderBottomColor: "#00BFFF", // AZUL en lugar de dorado
-    zIndex: 20,
+    top: -18,
+    alignSelf: "center",
+    backgroundColor: "#111827",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FFD54D",
+    zIndex: 30,
+  },
+  resultBadgeText: {
+    color: "#FFD54D",
+    fontWeight: "bold",
+    fontSize: 12,
   },
   spinButton: {
     backgroundColor: "#00BFFF", // AZUL en lugar de dorado

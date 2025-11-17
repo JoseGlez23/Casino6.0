@@ -1,5 +1,5 @@
 // src/games/specialty/VideoPoker.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
   SafeAreaView,
   Vibration,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
@@ -20,9 +22,109 @@ import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos unificado
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        // Animación de salida
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 0.8,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 100,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          onClose();
+        });
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlayTransparent}>
+        <Animated.View 
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+};
+
+// Hook de sonidos mejorado
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const loadSounds = async () => {
     try {
@@ -44,6 +146,8 @@ const useGameSounds = () => {
         { key: "coin", file: require("../../assets/sounds/coin.mp3") },
         { key: "error", file: require("../../assets/sounds/error.mp3") },
         { key: "success", file: require("../../assets/sounds/success.mp3") },
+        { key: "shuffle", file: require("../../assets/sounds/shuffle.mp3") },
+        { key: "hold", file: require("../../assets/sounds/hold.mp3") },
       ];
 
       for (const { key, file } of soundTypes) {
@@ -63,6 +167,8 @@ const useGameSounds = () => {
   };
 
   const playSound = async (type) => {
+    if (!soundEnabled) return;
+    
     try {
       let soundKey;
       switch (type) {
@@ -74,6 +180,12 @@ const useGameSounds = () => {
           break;
         case "card":
           soundKey = "card";
+          break;
+        case "shuffle":
+          soundKey = "shuffle";
+          break;
+        case "hold":
+          soundKey = "hold";
           break;
         case "chip":
         case "coin":
@@ -105,6 +217,12 @@ const useGameSounds = () => {
       case "card":
         Vibration.vibrate(30);
         break;
+      case "shuffle":
+        Vibration.vibrate([0, 50, 20, 50]);
+        break;
+      case "hold":
+        Vibration.vibrate(25);
+        break;
       case "chip":
       case "coin":
         Vibration.vibrate(20);
@@ -114,6 +232,8 @@ const useGameSounds = () => {
         Vibration.vibrate(15);
     }
   };
+
+  const toggleSound = () => setSoundEnabled(!soundEnabled);
 
   useEffect(() => {
     loadSounds();
@@ -127,33 +247,43 @@ const useGameSounds = () => {
     };
   }, []);
 
-  return playSound;
+  return { playSound, soundEnabled, toggleSound };
 };
 
-// Componente de animación de victoria
+// Componente de animación de victoria mejorado
 const WinAnimation = ({ show, handName, winAmount }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [confettiAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (show) {
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }).start();
+      // Animación principal
+      Animated.sequence([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(confettiAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        })
+      ]).start();
 
+      // Animación de pulso continua
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 500,
+            toValue: 1.1,
+            duration: 800,
             useNativeDriver: true,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 500,
+            duration: 800,
             useNativeDriver: true,
           }),
         ])
@@ -161,6 +291,7 @@ const WinAnimation = ({ show, handName, winAmount }) => {
     } else {
       scaleAnim.setValue(0);
       pulseAnim.setValue(1);
+      confettiAnim.setValue(0);
     }
   }, [show]);
 
@@ -172,18 +303,27 @@ const WinAnimation = ({ show, handName, winAmount }) => {
         styles.animationContainer,
         styles.winAnimation,
         {
-          transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
+          transform: [{ scale: scaleAnim }],
         },
       ]}
     >
-      <Ionicons name="trophy" size={80} color="#FFD700" />
+      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+        <Ionicons name="trophy" size={80} color="#FFD700" />
+      </Animated.View>
       <Text style={styles.winText}>¡{handName}!</Text>
-      <Text style={styles.winAmountText}>Premio: {winAmount}x</Text>
+      <Animated.Text 
+        style={[
+          styles.winAmountText,
+          { opacity: confettiAnim }
+        ]}
+      >
+        +{winAmount} Tickets
+      </Animated.Text>
     </Animated.View>
   );
 };
 
-// Componente de animación de pérdida
+// Componente de animación de pérdida mejorado
 const LoseAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [shakeAnim] = useState(new Animated.Value(0));
@@ -197,11 +337,13 @@ const LoseAnimation = ({ show }) => {
           friction: 8,
           useNativeDriver: true,
         }),
-        Animated.timing(shakeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        Animated.sequence([
+          Animated.timing(shakeAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: -1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: -1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: 0, duration: 100, useNativeDriver: true }),
+        ])
       ]).start();
     } else {
       scaleAnim.setValue(0);
@@ -210,8 +352,8 @@ const LoseAnimation = ({ show }) => {
   }, [show]);
 
   const shakeInterpolation = shakeAnim.interpolate({
-    inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+    inputRange: [-1, 0, 1],
+    outputRange: [-10, 0, 10],
   });
 
   if (!show) return null;
@@ -222,27 +364,233 @@ const LoseAnimation = ({ show }) => {
         styles.animationContainer,
         styles.loseAnimation,
         {
-          transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
+          transform: [
+            { scale: scaleAnim }, 
+            { translateX: shakeInterpolation }
+          ],
         },
       ]}
     >
-      <Ionicons name="sad-outline" size={80} color="#EF4444" />
+      <Ionicons name="close-circle" size={80} color="#EF4444" />
       <Text style={styles.loseText}>SIN PREMIO</Text>
     </Animated.View>
   );
 };
 
-// Función para calcular premios visuales (sin dar tickets reales)
-const getVisualRewards = (betAmount, multiplier = 0) => {
+// Componente de animación de reparto de cartas
+const CardDealAnimation = ({ cards, heldCards, onComplete }) => {
+  const [animatedCards, setAnimatedCards] = useState([]);
+
+  useEffect(() => {
+    if (cards.length === 0) return;
+
+    // Inicializar animaciones para cada carta
+    const cardAnimations = cards.map((_, index) => new Animated.Value(0));
+    setAnimatedCards(cardAnimations);
+
+    // Animar cartas en secuencia
+    const animations = cardAnimations.map((anim, index) =>
+      Animated.sequence([
+        Animated.delay(index * 150),
+        Animated.spring(anim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        })
+      ])
+    );
+
+    Animated.stagger(100, animations).start(() => {
+      if (onComplete) onComplete();
+    });
+  }, [cards]);
+
+  if (cards.length === 0 || animatedCards.length === 0) return null;
+
+  return (
+    <View style={styles.cardsRow}>
+      {cards.map((card, index) => {
+        const cardAnimation = animatedCards[index];
+        
+        if (!cardAnimation) return null;
+
+        const animatedStyle = {
+          transform: [
+            {
+              translateY: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-100, 0],
+              }),
+            },
+            {
+              scale: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.5, 1],
+              }),
+            },
+            {
+              rotate: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['-5deg', '0deg'],
+              }),
+            }
+          ],
+          opacity: cardAnimation,
+        };
+
+        return (
+          <View key={index} style={styles.cardContainer}>
+            <Animated.View 
+              style={[
+                styles.card, 
+                animatedStyle,
+                heldCards.includes(index) && styles.heldCard
+              ]}
+            >
+              <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
+                {card.value}
+              </Text>
+              <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
+                {card.suit}
+              </Text>
+              <View style={styles.cardCorner}>
+                <Text style={[styles.cardCornerValue, { color: getCardColor(card.suit) }]}>
+                  {card.value}
+                </Text>
+                <Text style={[styles.cardCornerSuit, { color: getCardColor(card.suit) }]}>
+                  {card.suit}
+                </Text>
+              </View>
+            </Animated.View>
+            {heldCards.includes(index) && (
+              <View style={styles.holdIndicator}>
+                <Text style={styles.holdText}>MANTENIDA</Text>
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
+// Componente de animación de cambio de cartas
+const CardDrawAnimation = ({ cards, heldCards, onComplete }) => {
+  const [animatedCards, setAnimatedCards] = useState([]);
+
+  useEffect(() => {
+    if (cards.length === 0) return;
+
+    // Inicializar animaciones para cada carta
+    const cardAnimations = cards.map((_, index) => 
+      heldCards.includes(index) ? new Animated.Value(1) : new Animated.Value(0)
+    );
+    setAnimatedCards(cardAnimations);
+
+    // Animar solo las cartas no mantenidas
+    const animations = cardAnimations.map((anim, index) => {
+      if (heldCards.includes(index)) {
+        return Animated.delay(0); // No animar cartas mantenidas
+      }
+      return Animated.sequence([
+        Animated.delay(index * 100),
+        Animated.parallel([
+          Animated.timing(anim, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 200,
+            delay: 200,
+            useNativeDriver: true,
+          })
+        ])
+      ]);
+    });
+
+    Animated.stagger(80, animations).start(() => {
+      if (onComplete) onComplete();
+    });
+  }, [cards, heldCards]);
+
+  if (cards.length === 0 || animatedCards.length === 0) return null;
+
+  return (
+    <View style={styles.cardsRow}>
+      {cards.map((card, index) => {
+        const cardAnimation = animatedCards[index];
+        
+        if (!cardAnimation) return null;
+
+        const isHeld = heldCards.includes(index);
+        
+        const animatedStyle = {
+          transform: [
+            {
+              scale: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: isHeld ? [1, 1] : [0.8, 1],
+              }),
+            }
+          ],
+          opacity: cardAnimation,
+        };
+
+        return (
+          <View key={index} style={styles.cardContainer}>
+            <Animated.View 
+              style={[
+                styles.card, 
+                animatedStyle,
+                isHeld && styles.heldCard
+              ]}
+            >
+              <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
+                {card.value}
+              </Text>
+              <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
+                {card.suit}
+              </Text>
+              <View style={styles.cardCorner}>
+                <Text style={[styles.cardCornerValue, { color: getCardColor(card.suit) }]}>
+                  {card.value}
+                </Text>
+                <Text style={[styles.cardCornerSuit, { color: getCardColor(card.suit) }]}>
+                  {card.suit}
+                </Text>
+              </View>
+            </Animated.View>
+            {isHeld && (
+              <View style={styles.holdIndicator}>
+                <Text style={styles.holdText}>MANTENIDA</Text>
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
+// Función auxiliar para color de cartas
+const getCardColor = (suit) => {
+  return suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
+};
+
+// Función para calcular tickets según apuesta y multiplicador
+const getTicketRewards = (betAmount, multiplier = 0) => {
   const baseRewards = {
-    10: 12,
-    25: 30,
-    50: 60,
-    100: 120,
+    10: 10,
+    25: 25,
+    50: 50,
+    100: 100,
   };
   
-  const baseTickets = baseRewards[betAmount] || Math.floor(betAmount * 1.2);
-  return multiplier > 0 ? Math.floor(baseTickets * multiplier * 0.1) : 0;
+  const baseTickets = baseRewards[betAmount] || betAmount;
+  return multiplier > 0 ? Math.floor(baseTickets * multiplier) : 0;
 };
 
 // Evaluación mejorada de manos de Video Poker
@@ -270,8 +618,8 @@ const evaluateVideoPokerHand = (hand) => {
 
   // Escalera Real (A,K,Q,J,10 mismo palo)
   const isRoyal = uniqueSuits.length === 1 && 
-                  values.includes('A') && values.includes('K') && 
-                  values.includes('Q') && values.includes('J') && values.includes('10');
+                  numericValues.includes(14) && numericValues.includes(13) && 
+                  numericValues.includes(12) && numericValues.includes(11) && numericValues.includes(10);
   if (isRoyal) return { rank: 10, name: 'ESCALERA REAL', multiplier: 250 };
 
   // Escalera de Color
@@ -305,12 +653,74 @@ const evaluateVideoPokerHand = (hand) => {
   // Pareja de Jotas o mejor
   if (counts[0] === 2) {
     const pairValue = Object.keys(valueCounts).find(key => valueCounts[key] === 2);
-    if (['J', 'Q', 'K', 'A'].includes(pairValue)) {
+    const highCards = ['J', 'Q', 'K', 'A'];
+    if (highCards.includes(pairValue)) {
       return { rank: 2, name: 'PAREJA DE JOTAS O MEJOR', multiplier: 1 };
     }
   }
 
   return { rank: 1, name: 'SIN PREMIO', multiplier: 0 };
+};
+
+// Función para determinar si el jugador gana (probabilidad ajustable)
+const shouldPlayerWin = (difficulty = "normal") => {
+  const probabilities = {
+    easy: 0.15,    // 15%
+    normal: 0.05,  // 5%
+    hard: 0.02     // 2%
+  };
+  
+  return Math.random() < (probabilities[difficulty] || probabilities.normal);
+};
+
+// Función para generar mano ganadora forzada
+const generateWinningHand = (handType = "royal") => {
+  switch (handType) {
+    case "royal":
+      return [
+        { value: 'A', suit: '♥', held: false },
+        { value: 'K', suit: '♥', held: false },
+        { value: 'Q', suit: '♥', held: false },
+        { value: 'J', suit: '♥', held: false },
+        { value: '10', suit: '♥', held: false }
+      ];
+    case "flush":
+      return [
+        { value: 'A', suit: '♠', held: false },
+        { value: 'K', suit: '♠', held: false },
+        { value: '8', suit: '♠', held: false },
+        { value: '5', suit: '♠', held: false },
+        { value: '3', suit: '♠', held: false }
+      ];
+    case "pair":
+      return [
+        { value: 'A', suit: '♥', held: false },
+        { value: 'A', suit: '♠', held: false },
+        { value: '7', suit: '♦', held: false },
+        { value: '4', suit: '♣', held: false },
+        { value: '2', suit: '♥', held: false }
+      ];
+    default:
+      return [
+        { value: 'A', suit: '♥', held: false },
+        { value: 'K', suit: '♥', held: false },
+        { value: 'Q', suit: '♥', held: false },
+        { value: 'J', suit: '♥', held: false },
+        { value: '10', suit: '♥', held: false }
+      ];
+  }
+};
+
+// Función para generar mano perdedora
+const generateLosingHand = () => {
+  // Crear una mano que no tenga combinaciones ganadoras
+  return [
+        { value: '2', suit: '♥', held: false },
+        { value: '5', suit: '♠', held: false },
+        { value: '8', suit: '♦', held: false },
+        { value: 'J', suit: '♣', held: false },
+        { value: 'K', suit: '♥', held: false }
+      ];
 };
 
 const CARD_VALUES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
@@ -325,7 +735,7 @@ export default function VideoPoker({ navigation }) {
     addTickets,
     canAfford,
   } = useCoins();
-  const playSound = useGameSounds();
+  const { playSound, soundEnabled, toggleSound } = useGameSounds();
 
   const [bet, setBet] = useState(0);
   const [cards, setCards] = useState([]);
@@ -337,32 +747,78 @@ export default function VideoPoker({ navigation }) {
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [winningHand, setWinningHand] = useState("");
   const [winMultiplier, setWinMultiplier] = useState(0);
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [dealingCards, setDealingCards] = useState(false);
+  const [drawingCards, setDrawingCards] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false); // NUEVO ESTADO
 
-  const cardAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
 
+  // MODIFICADO: Bloquear navegación con modal de imagen
   useEffect(() => {
-    const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    };
-    initializeAudio();
-  }, []);
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameInProgress) {
+          setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE ALERTA
+          return true;
+        }
+        return false;
+      }
+    );
 
-  const animateCards = () => {
-    cardAnimations.setValue(0);
-    Animated.timing(cardAnimations, {
-      toValue: 1,
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE BLOQUEADOR
+      }
+    });
+
+    return () => {
+      backHandler.remove();
+      unsubscribe();
+    };
+  }, [navigation, gameInProgress]);
+
+  // MODIFICADO: Bloquear la barra de pestañas con modal de imagen
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE BLOQUEADOR
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // AÑADIR FUNCIÓN PARA CERRAR EL MODAL
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
   };
 
   const animateResult = () => {
@@ -390,9 +846,9 @@ export default function VideoPoker({ navigation }) {
     ]).start();
   };
 
-  const triggerWinAnimation = (handName, multiplier) => {
+  const triggerWinAnimation = (handName, tickets) => {
     setWinningHand(handName);
-    setWinMultiplier(multiplier);
+    setWinMultiplier(tickets);
     setShowWinAnimation(true);
     setTimeout(() => setShowWinAnimation(false), 3000);
   };
@@ -417,31 +873,44 @@ export default function VideoPoker({ navigation }) {
     await playSound("coin");
     pulseAnimation();
 
-    animateCards();
+    setGameInProgress(true);
+    setDealingCards(true);
 
-    setTimeout(async () => {
-      const newCards = [];
-      for (let i = 0; i < 5; i++) {
-        const value = CARD_VALUES[Math.floor(Math.random() * CARD_VALUES.length)];
-        const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
-        newCards.push({ value, suit, held: false });
-        if (i < 4) await playSound("card");
+    await playSound("shuffle");
+
+    setTimeout(() => {
+      // Determinar si el jugador ganará
+      const playerWillWin = shouldPlayerWin("normal");
+      
+      let newCards;
+      
+      if (playerWillWin) {
+        // Forzar mano ganadora (diferentes tipos para variedad)
+        const handTypes = ["royal", "flush", "pair"];
+        const randomType = handTypes[Math.floor(Math.random() * handTypes.length)];
+        newCards = generateWinningHand(randomType);
+      } else {
+        // Mano normal (95% de probabilidad de perder)
+        newCards = generateLosingHand();
       }
       
       setCards(newCards);
       setHeldCards([]);
-      setGameState("holding");
-      setResult("");
-      setTicketsWon(0);
+      setResult("REPARTIENDO CARTAS...");
+    }, 500);
+  };
 
-      await playSound("card");
-    }, 400);
+  // Función cuando terminan de repartirse las cartas
+  const handleDealComplete = () => {
+    setDealingCards(false);
+    setGameState("holding");
+    setResult("SELECCIONA LAS CARTAS QUE QUIERES MANTENER");
   };
 
   const toggleHold = async (index) => {
     if (gameState !== "holding") return;
     
-    await playSound("click");
+    await playSound("hold");
     const newHeldCards = [...heldCards];
     if (newHeldCards.includes(index)) {
       const idx = newHeldCards.indexOf(index);
@@ -455,7 +924,15 @@ export default function VideoPoker({ navigation }) {
   const drawCards = async () => {
     await playSound("click");
     pulseAnimation();
+    
+    setDrawingCards(true);
+    setResult("DIBUJANDO NUEVAS CARTAS...");
+  };
 
+  // Función cuando terminan de dibujarse las cartas
+  const handleDrawComplete = () => {
+    setDrawingCards(false);
+    
     const newCards = [...cards];
     
     for (let i = 0; i < 5; i++) {
@@ -463,7 +940,6 @@ export default function VideoPoker({ navigation }) {
         const value = CARD_VALUES[Math.floor(Math.random() * CARD_VALUES.length)];
         const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
         newCards[i] = { value, suit, held: false };
-        await playSound("card");
       }
     }
     
@@ -475,16 +951,17 @@ export default function VideoPoker({ navigation }) {
   const evaluateHand = async (hand) => {
     const evaluation = evaluateVideoPokerHand(hand);
     
-    // Calcular premios visuales solamente (NO se otorgan monedas ni tickets reales)
-    const visualWinAmount = bet * evaluation.multiplier;
-    const visualTicketReward = getVisualRewards(bet, evaluation.multiplier);
+    // Calcular tickets ganados
+    const ticketReward = getTicketRewards(bet, evaluation.multiplier);
 
     if (evaluation.multiplier > 0) {
-      // SOLO mostrar animación y mensaje de victoria - NO dar monedas ni tickets
-      setResult(`${evaluation.name}! Premio: ${visualWinAmount} MC (Visual)`);
-      setTicketsWon(visualTicketReward);
+      // JUGADOR GANA - dar tickets
+      await addTickets(ticketReward, `Ganancia - ${evaluation.name}`);
+      
+      setResult(`${evaluation.name}! GANAS ${ticketReward} Tickets`);
+      setTicketsWon(ticketReward);
       await playSound("win");
-      triggerWinAnimation(evaluation.name, evaluation.multiplier);
+      triggerWinAnimation(evaluation.name, ticketReward);
     } else {
       // SI PIERDE - NO dar nada
       setResult("Sin premio. Mejor suerte la próxima");
@@ -494,11 +971,14 @@ export default function VideoPoker({ navigation }) {
     }
 
     setGameState("result");
+    setGameInProgress(false);
     animateResult();
   };
 
   const resetGame = async () => {
     setBet(0);
+    setCards([]);
+    setHeldCards([]);
     setGameState("betting");
     setResult("");
     setTicketsWon(0);
@@ -506,28 +986,13 @@ export default function VideoPoker({ navigation }) {
     setShowLoseAnimation(false);
     setWinningHand("");
     setWinMultiplier(0);
+    setGameInProgress(false);
+    setDealingCards(false);
+    setDrawingCards(false);
     await playSound("click");
   };
 
   const renderCard = (card, index) => {
-    const cardAnimation = {
-      transform: [
-        {
-          translateY: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [-30, 0],
-          }),
-        },
-        {
-          scale: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.8, 1],
-          }),
-        },
-      ],
-      opacity: cardAnimations,
-    };
-
     const getCardColor = (suit) => {
       return suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
     };
@@ -535,11 +1000,11 @@ export default function VideoPoker({ navigation }) {
     return (
       <TouchableOpacity
         key={index}
-        style={[styles.cardContainer]}
+        style={styles.cardContainer}
         onPress={() => toggleHold(index)}
         disabled={gameState !== "holding"}
       >
-        <Animated.View style={[styles.card, cardAnimation, heldCards.includes(index) && styles.heldCard]}>
+        <View style={[styles.card, heldCards.includes(index) && styles.heldCard]}>
           <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
             {card.value}
           </Text>
@@ -554,7 +1019,7 @@ export default function VideoPoker({ navigation }) {
               {card.suit}
             </Text>
           </View>
-        </Animated.View>
+        </View>
         {heldCards.includes(index) && (
           <View style={styles.holdIndicator}>
             <Text style={styles.holdText}>MANTENIDA</Text>
@@ -568,9 +1033,23 @@ export default function VideoPoker({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* AÑADIR MODAL DE BLOQUEO */}
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
+
       {/* Animaciones */}
-      <WinAnimation show={showWinAnimation} handName={winningHand} winAmount={winMultiplier} />
+      <WinAnimation show={showWinAnimation} handName={winningHand} winAmount={ticketsWon} />
       <LoseAnimation show={showLoseAnimation} />
+
+      {/* ELIMINAR BLOQUEADOR DE PESTAÑAS ORIGINAL */}
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Text style={styles.gameInProgressText}>
+            ⚠️ PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -579,10 +1058,8 @@ export default function VideoPoker({ navigation }) {
       >
         {/* Header mejorado */}
         <View style={styles.header}>
-          {/* Saldo y Tickets al lado izquierdo */}
           <View style={styles.balancesContainer}>
             <View style={styles.balanceRow}>
-              {/* Saldo */}
               <View style={styles.balanceItem}>
                 <View style={styles.coinsDisplay}>
                   <Image
@@ -595,7 +1072,6 @@ export default function VideoPoker({ navigation }) {
                 </View>
               </View>
 
-              {/* Tickets */}
               <View style={styles.balanceItem}>
                 <View style={styles.ticketsDisplay}>
                   <Image
@@ -610,15 +1086,36 @@ export default function VideoPoker({ navigation }) {
             </View>
           </View>
 
-          {/* Espacio vacío para balancear */}
-          <View style={styles.emptySpace} />
+          {/* Botón de sonido */}
+          <TouchableOpacity onPress={toggleSound} style={styles.soundButton}>
+            <Ionicons 
+              name={soundEnabled ? "volume-high" : "volume-mute"} 
+              size={24} 
+              color="#FFD700" 
+            />
+          </TouchableOpacity>
         </View>
 
-        {/* Cartas */}
+        {/* Cartas con animación */}
         <View style={styles.cardsArea}>
-          <View style={styles.cardsRow}>
-            {cards.map((card, index) => renderCard(card, index))}
-          </View>
+          {dealingCards ? (
+            <CardDealAnimation 
+              cards={cards} 
+              heldCards={heldCards}
+              onComplete={handleDealComplete}
+            />
+          ) : drawingCards ? (
+            <CardDrawAnimation 
+              cards={cards} 
+              heldCards={heldCards}
+              onComplete={handleDrawComplete}
+            />
+          ) : cards.length > 0 ? (
+            <View style={styles.cardsRow}>
+              {cards.map((card, index) => renderCard(card, index))}
+            </View>
+          ) : null}
+          
           {gameState === "holding" && (
             <Text style={styles.holdInstruction}>
               SELECCIONA LAS CARTAS QUE QUIERES MANTENER
@@ -646,12 +1143,11 @@ export default function VideoPoker({ navigation }) {
           ]}
         >
           <Text style={styles.message}>
-            {result || (gameState === "betting" ? "SELECCIONE SU APUESTA" : 
-                      gameState === "holding" ? "MANTENGA SUS CARTAS" : "")}
+            {result || (gameState === "betting" ? "SELECCIONE SU APUESTA" : "")}
           </Text>
           {ticketsWon > 0 && gameState === "result" && (
             <View style={styles.ticketsWonContainer}>
-              <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets (Visual)</Text>
+              <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets</Text>
             </View>
           )}
         </Animated.View>
@@ -686,7 +1182,7 @@ export default function VideoPoker({ navigation }) {
                       {amount.toLocaleString()}
                     </Text>
                     <Text style={styles.ticketRewardText}>
-                      Premio visual solamente
+                      +{getTicketRewards(amount, 1)} tickets
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -736,7 +1232,7 @@ export default function VideoPoker({ navigation }) {
 
         {/* Tabla de pagos */}
         <View style={styles.payouts}>
-          <Text style={styles.payoutsTitle}>TABLA DE PREMIOS (VISUAL)</Text>
+          <Text style={styles.payoutsTitle}>TABLA DE PREMIOS</Text>
           <View style={styles.payoutGrid}>
             <View style={styles.payoutRow}>
               <Text style={styles.payoutHand}>ESCALERA REAL</Text>
@@ -776,7 +1272,7 @@ export default function VideoPoker({ navigation }) {
             </View>
           </View>
           <Text style={styles.disclaimerText}>
-            * Los premios son visuales solamente. No se otorgan monedas ni tickets reales.
+            * Solo se otorgan tickets al ganar
           </Text>
         </View>
 
@@ -856,21 +1352,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    top: 0,
-  },
-  title: {
-    color: "#FFD700",
-    fontSize: 18,
-    fontWeight: "bold",
-    letterSpacing: 1,
-  },
-  emptySpace: {
-    width: 80,
+  soundButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "#1A1A1A",
+    borderWidth: 1,
+    borderColor: "#FFD700",
   },
   cardsArea: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
@@ -879,6 +1366,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#333",
+    minHeight: 180,
   },
   cardsRow: {
     flexDirection: "row",
@@ -1023,11 +1511,10 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   ticketRewardText: {
-    color: "#888",
+    color: "#10B981",
     fontSize: 9,
     marginTop: 2,
     textAlign: "center",
-    fontStyle: "italic",
   },
   currentBet: {
     color: "#FFD700",
@@ -1194,5 +1681,38 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 10,
     textAlign: "center",
+  },
+  // Estilos para el indicador de juego en progreso
+  gameInProgressIndicator: {
+    backgroundColor: "#DC2626",
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  // NUEVOS ESTILOS PARA EL MODAL TRANSPARENTE
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,
+    height: height * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
   },
 });

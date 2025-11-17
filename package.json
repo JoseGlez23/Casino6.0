@@ -17,6 +17,7 @@
     "@react-navigation/bottom-tabs": "^7.5.0",
     "@react-navigation/native": "^7.1.18",
     "@react-navigation/stack": "^7.5.0",
+    "@stripe/stripe-react-native": "0.50.3",
     "@supabase/supabase-js": "^2.76.1",
     "axios": "^1.12.2",
     "expo": "^54.0.20",
@@ -38,7 +39,8 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-sound": "^0.13.0",
-    "react-native-svg": "15.12.1"
+    "react-native-svg": "15.12.1",
+    "stripe": "^19.3.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

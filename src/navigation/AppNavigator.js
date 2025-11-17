@@ -1,3 +1,4 @@
+// navigation/AppNavigator.js
 import "react-native-gesture-handler";
 import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
@@ -22,8 +23,6 @@ import EditProfileScreen from "../screens/EditProfileScreen";
 
 // Nueva pantalla de Wallet
 import WalletScreen from "../screens/WalletScreen";
-
-// AGREGAR ESTA IMPORTACIÓN
 import BuyCoinsScreen from "../screens/BuyCoinsScreen";
 
 // Juegos - Tragamonedas
@@ -333,60 +332,92 @@ function MainTabs() {
   );
 }
 
-export default function AppNavigator() {
+function MainAppNavigator() {
   return (
-    <CoinsProvider>
-      <Stack.Navigator
-        initialRouteName="Login"
-        screenOptions={{
-          headerStyle: { backgroundColor: "#1a1a1a" },
-          headerTintColor: "#FFD700",
-          headerTitleStyle: { fontWeight: "bold", fontSize: 18 },
-          cardStyle: { backgroundColor: "#1a1a1a" },
+    <Stack.Navigator
+      initialRouteName="Login"
+      screenOptions={{
+        headerStyle: { backgroundColor: "#1a1a1a" },
+        headerTintColor: "#FFD700",
+        headerTitleStyle: { fontWeight: "bold", fontSize: 18 },
+        cardStyle: { backgroundColor: "#1a1a1a" },
+      }}
+    >
+      <Stack.Screen 
+        name="Login" 
+        component={LoginScreen} 
+        options={{ 
+          headerShown: false,
+        }} 
+      />
+      <Stack.Screen 
+        name="Register" 
+        component={RegisterScreen} 
+        options={{ 
+          headerShown: false,
+        }} 
+      />
+      <Stack.Screen
+        name="IdentityVerification"
+        component={IdentityVerificationScreen}
+        options={{ 
+          title: "Verificación de Identidad", 
+          headerBackTitle: "Atrás",
         }}
-      >
-        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
-        <Stack.Screen
-          name="IdentityVerification"
-          component={IdentityVerificationScreen}
-          options={{ title: "Verificación de Identidad", headerBackTitle: "Atrás" }}
-        />
-        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-        <Stack.Screen name="Profile" component={ProfileScreen} options={{ 
-          title: "Mi Perfil", 
-          headerStyle: { backgroundColor: "#1a1a1a" }, 
-          headerTintColor: "#FFD700" 
-        }} />
-        <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ 
-          title: "Editar Perfil", 
-          headerStyle: { backgroundColor: "#1a1a1a" }, 
-          headerTintColor: "#FFD700" 
-        }} />
-        <Stack.Screen name="Wallet" component={WalletScreen} options={{ 
-          title: "Mi Cartera", 
-          headerStyle: { backgroundColor: "#1a1a1a" }, 
-          headerTintColor: "#FFD700" 
-        }} />
-        
-        {/* AGREGAR ESTA PANTALLA */}
-        <Stack.Screen name="BuyCoinsScreen" component={BuyCoinsScreen} options={{ 
-          title: "Comprar Fichas", 
-          headerStyle: { backgroundColor: "#1a1a1a" }, 
-          headerTintColor: "#FFD700" 
-        }} />
+      />
+      <Stack.Screen 
+        name="Main" 
+        component={MainTabs} 
+        options={{ 
+          headerShown: false,
+        }} 
+      />
+      <Stack.Screen name="Profile" component={ProfileScreen} options={{ 
+        title: "Mi Perfil", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700",
+      }} />
+      <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ 
+        title: "Editar Perfil", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700",
+      }} />
+      <Stack.Screen name="Wallet" component={WalletScreen} options={{ 
+        title: "Mi Cartera", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700",
+      }} />
 
-        <Stack.Screen name="Transferir" component={TransferScreen} options={{ 
+      <Stack.Screen name="Soporte" component={SupportScreen} options={{ 
+        title: "Soporte", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700",
+      }} />
+      
+      <Stack.Screen name="BuyCoinsScreen" component={BuyCoinsScreen} options={{ 
+        title: "Comprar Fichas", 
+        headerStyle: { backgroundColor: "#1a1a1a" }, 
+        headerTintColor: "#FFD700",
+      }} />
+
+      <Stack.Screen name="Transferir" component={TransferScreen} options={{ 
         title: "Recargar Fichas", 
         headerStyle: { backgroundColor: "#1a1a1a" }, 
-        headerTintColor: "#FFD700" 
+        headerTintColor: "#FFD700",
       }} />
       <Stack.Screen name="Tickets" component={TicketsScreen} options={{ 
         title: "Intercambiar Tickets", 
         headerStyle: { backgroundColor: "#1a1a1a" }, 
-        headerTintColor: "#FFD700" 
+        headerTintColor: "#FFD700",
       }} />
-      </Stack.Navigator>
+    </Stack.Navigator>
+  );
+}
+
+export default function AppNavigator() {
+  return (
+    <CoinsProvider>
+      <MainAppNavigator />
     </CoinsProvider>
   );
 }

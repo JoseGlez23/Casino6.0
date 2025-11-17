@@ -1,5 +1,5 @@
 // src/games/specialty/CaribbeanStud.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
   SafeAreaView,
   Vibration,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
@@ -20,7 +22,106 @@ import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos unificado
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        // Animación de salida
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 0.8,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 100,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          onClose();
+        });
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlayTransparent}>
+        <Animated.View 
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+};
+
+// Hook de sonidos mejorado
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
 
@@ -44,6 +145,7 @@ const useGameSounds = () => {
         { key: "coin", file: require("../../assets/sounds/coin.mp3") },
         { key: "error", file: require("../../assets/sounds/error.mp3") },
         { key: "success", file: require("../../assets/sounds/success.mp3") },
+        { key: "shuffle", file: require("../../assets/sounds/shuffle.mp3") },
       ];
 
       for (const { key, file } of soundTypes) {
@@ -79,6 +181,9 @@ const useGameSounds = () => {
         case "coin":
           soundKey = "coin";
           break;
+        case "shuffle":
+          soundKey = "shuffle";
+          break;
         case "click":
         default:
           soundKey = "click";
@@ -109,6 +214,9 @@ const useGameSounds = () => {
       case "coin":
         Vibration.vibrate(20);
         break;
+      case "shuffle":
+        Vibration.vibrate([0, 50, 30, 50]);
+        break;
       case "click":
       default:
         Vibration.vibrate(15);
@@ -130,30 +238,180 @@ const useGameSounds = () => {
   return playSound;
 };
 
-// Componente de animación de victoria
-const WinAnimation = ({ show }) => {
-  const [scaleAnim] = useState(new Animated.Value(0));
-  const [pulseAnim] = useState(new Animated.Value(1));
+// Componente de animación de barajeo mejorado
+const ShuffleAnimation = ({ show, onComplete }) => {
+  const [rotation] = useState(new Animated.Value(0));
+  const [progress] = useState(new Animated.Value(0));
+  const [cards] = useState([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0)
+  ]);
 
   useEffect(() => {
     if (show) {
-      Animated.spring(scaleAnim, {
+      // Animación de progreso
+      Animated.timing(progress, {
         toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
+        duration: 2000,
+        easing: Easing.linear,
+        useNativeDriver: false,
       }).start();
 
+      // Animación de rotación continua
+      Animated.loop(
+        Animated.timing(rotation, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      ).start();
+
+      // Animación de cartas volando
+      cards.forEach((cardAnim, index) => {
+        Animated.sequence([
+          Animated.timing(cardAnim, {
+            toValue: 1,
+            duration: 300,
+            delay: index * 200,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardAnim, {
+            toValue: 0,
+            duration: 300,
+            delay: 200,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start();
+      });
+
+      // Completar después de 2 segundos
+      const timeout = setTimeout(() => {
+        onComplete?.();
+      }, 2000);
+
+      return () => clearTimeout(timeout);
+    } else {
+      rotation.setValue(0);
+      progress.setValue(0);
+      cards.forEach(card => card.setValue(0));
+    }
+  }, [show]);
+
+  if (!show) return null;
+
+  const progressWidth = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
+
+  const rotateInterpolation = rotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={styles.shuffleContainer}>
+      <Text style={styles.shuffleText}>BARAJANDO CARTAS...</Text>
+      
+      {/* Barra de progreso */}
+      <View style={styles.progressBar}>
+        <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
+      </View>
+
+      {/* Cartas animadas */}
+      <View style={styles.shuffleCardsContainer}>
+        {cards.map((cardAnim, index) => {
+          const cardStyle = {
+            transform: [
+              {
+                translateY: cardAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, -40],
+                }),
+              },
+              {
+                rotate: cardAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0deg', '15deg'],
+                }),
+              },
+            ],
+            opacity: cardAnim.interpolate({
+              inputRange: [0, 0.5, 1],
+              outputRange: [0.7, 1, 0.7],
+            }),
+          };
+
+          return (
+            <Animated.View 
+              key={index}
+              style={[
+                styles.shuffleCard,
+                cardStyle,
+                { zIndex: 3 - index }
+              ]}
+            >
+              <View style={styles.shuffleCardContent}>
+                <Text style={styles.shuffleCardPattern}>♠♥♦♣</Text>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+
+      {/* Mazo giratorio */}
+      <Animated.View 
+        style={[
+          styles.deck,
+          {
+            transform: [{ rotate: rotateInterpolation }],
+          },
+        ]}
+      >
+        <Text style={styles.deckText}>52</Text>
+      </Animated.View>
+    </View>
+  );
+};
+
+// Componente de animación de victoria mejorado
+const WinAnimation = ({ show, handName, winAmount }) => {
+  const [scaleAnim] = useState(new Animated.Value(0));
+  const [pulseAnim] = useState(new Animated.Value(1));
+  const [confettiAnim] = useState(new Animated.Value(0));
+
+  useEffect(() => {
+    if (show) {
+      // Animación principal
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(confettiAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        })
+      ]).start();
+
+      // Animación de pulso continua
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
             toValue: 1.2,
-            duration: 500,
+            duration: 600,
             useNativeDriver: true,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 500,
+            duration: 600,
             useNativeDriver: true,
           }),
         ])
@@ -161,6 +419,7 @@ const WinAnimation = ({ show }) => {
     } else {
       scaleAnim.setValue(0);
       pulseAnim.setValue(1);
+      confettiAnim.setValue(0);
     }
   }, [show]);
 
@@ -176,41 +435,71 @@ const WinAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="trophy" size={80} color="#FFD700" />
-      <Text style={styles.winText}>¡GANASTE!</Text>
+      {/* Confeti animado */}
+      <Animated.View 
+        style={[
+          styles.confetti,
+          {
+            opacity: confettiAnim,
+            transform: [
+              {
+                scale: confettiAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.5, 1],
+                })
+              }
+            ]
+          }
+        ]}
+      >
+        <Text style={styles.confettiText}>🎉</Text>
+      </Animated.View>
+
+      <Ionicons name="trophy" size={70} color="#FFD700" />
+      <Text style={styles.winText}>¡{handName}!</Text>
+      <Text style={styles.winAmountText}>+{winAmount} Tickets</Text>
     </Animated.View>
   );
 };
 
-// Componente de animación de pérdida
+// Componente de animación de pérdida mejorado
 const LoseAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [shakeAnim] = useState(new Animated.Value(0));
+  const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (show) {
-      Animated.sequence([
+      Animated.parallel([
         Animated.spring(scaleAnim, {
           toValue: 1,
           tension: 100,
           friction: 8,
           useNativeDriver: true,
         }),
-        Animated.timing(shakeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        Animated.sequence([
+          Animated.timing(shakeAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ])
       ]).start();
     } else {
       scaleAnim.setValue(0);
       shakeAnim.setValue(0);
+      fadeAnim.setValue(0);
     }
   }, [show]);
 
   const shakeInterpolation = shakeAnim.interpolate({
-    inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+    inputRange: [0, 0.25, 0.5, 0.75, 1],
+    outputRange: [0, -15, 15, -15, 0],
   });
 
   if (!show) return null;
@@ -225,14 +514,26 @@ const LoseAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="sad-outline" size={80} color="#EF4444" />
-      <Text style={styles.loseText}>¡PERDISTE!</Text>
+      <Ionicons name="sad-outline" size={70} color="#EF4444" />
+      <Animated.Text 
+        style={[
+          styles.loseText,
+          {
+            opacity: fadeAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 1]
+            })
+          }
+        ]}
+      >
+        ¡MEJOR SUERTE!
+      </Animated.Text>
     </Animated.View>
   );
 };
 
 // Función para calcular tickets según apuesta
-const getTicketRewards = (betAmount, isWin = false, multiplier = 1) => {
+const getTicketRewards = (betAmount, multiplier = 1) => {
   const baseRewards = {
     10: 12,
     25: 30,
@@ -241,7 +542,7 @@ const getTicketRewards = (betAmount, isWin = false, multiplier = 1) => {
   };
   
   const baseTickets = baseRewards[betAmount] || Math.floor(betAmount * 1.2);
-  return isWin ? Math.floor(baseTickets * multiplier) : Math.floor(baseTickets * 0.5);
+  return Math.floor(baseTickets * multiplier);
 };
 
 // Evaluación de manos mejorada
@@ -249,48 +550,62 @@ const evaluateHand = (cards) => {
   const values = cards.map(card => card.numeric);
   const suits = cards.map(card => card.suit);
   
-  // Verificar escalera real
-  const isRoyal = values.includes(14) && values.includes(13) && 
-                  values.includes(12) && values.includes(11) && values.includes(10) &&
-                  new Set(suits).size === 1;
-  if (isRoyal) return { rank: 10, name: "Escalera Real" };
-  
-  // Verificar escalera de color
-  const isStraightFlush = checkStraightFlush(cards);
-  if (isStraightFlush) return { rank: 9, name: "Escalera de Color" };
-  
-  // Verificar póker
+  // Contar valores y palos
   const valueCounts = getValueCounts(values);
-  if (Math.max(...Object.values(valueCounts)) === 4) 
-    return { rank: 8, name: "Póker" };
+  const suitCounts = getValueCounts(suits);
   
-  // Verificar full house
-  if (Object.values(valueCounts).includes(3) && Object.values(valueCounts).includes(2))
-    return { rank: 7, name: "Full House" };
-  
-  // Verificar color
-  if (new Set(suits).size === 1) 
-    return { rank: 6, name: "Color" };
+  const maxSameValue = Math.max(...Object.values(valueCounts));
+  const maxSameSuit = Math.max(...Object.values(suitCounts));
+  const isFlush = maxSameSuit === 5;
   
   // Verificar escalera
-  if (checkStraight(values)) 
-    return { rank: 5, name: "Escalera" };
+  const sortedValues = [...new Set(values)].sort((a, b) => a - b);
+  const isStraight = checkStraight(sortedValues);
   
-  // Verificar trío
-  if (Object.values(valueCounts).includes(3)) 
-    return { rank: 4, name: "Trío" };
+  // Determinar ranking de mano
+  if (isFlush && isStraight) {
+    // Escalera Real o Escalera de Color
+    if (sortedValues.includes(14) && sortedValues.includes(13) && 
+        sortedValues.includes(12) && sortedValues.includes(11) && sortedValues.includes(10)) {
+      return { rank: 10, name: "ESCALERA REAL", multiplier: 100 };
+    }
+    return { rank: 9, name: "ESCALERA DE COLOR", multiplier: 50 };
+  }
   
-  // Verificar doble pareja
+  if (maxSameValue === 4) {
+    return { rank: 8, name: "PÓKER", multiplier: 20 };
+  }
+  
+  if (maxSameValue === 3 && Object.values(valueCounts).includes(2)) {
+    return { rank: 7, name: "FULL HOUSE", multiplier: 7 };
+  }
+  
+  if (isFlush) {
+    return { rank: 6, name: "COLOR", multiplier: 5 };
+  }
+  
+  if (isStraight) {
+    return { rank: 5, name: "ESCALERA", multiplier: 4 };
+  }
+  
+  if (maxSameValue === 3) {
+    return { rank: 4, name: "TRÍO", multiplier: 3 };
+  }
+  
   const pairs = Object.values(valueCounts).filter(count => count === 2).length;
-  if (pairs === 2) 
-    return { rank: 3, name: "Doble Pareja" };
+  if (pairs === 2) {
+    return { rank: 3, name: "DOBLE PAREJA", multiplier: 2 };
+  }
   
-  // Verificar pareja
-  if (pairs === 1) 
-    return { rank: 2, name: "Pareja" };
+  if (pairs === 1) {
+    // Verificar si es pareja de Jotas o mejor
+    const pairValue = Object.keys(valueCounts).find(key => valueCounts[key] === 2);
+    if (['J', 'Q', 'K', 'A'].includes(pairValue)) {
+      return { rank: 2, name: "PAREJA J+", multiplier: 1 };
+    }
+  }
   
-  // Carta alta
-  return { rank: 1, name: "Carta Alta", highCard: Math.max(...values) };
+  return { rank: 1, name: "CARTA ALTA", multiplier: 0 };
 };
 
 const getValueCounts = (values) => {
@@ -300,42 +615,64 @@ const getValueCounts = (values) => {
   }, {});
 };
 
-const checkStraight = (values) => {
-  const sorted = [...new Set(values)].sort((a, b) => a - b);
-  if (sorted.length < 5) return false;
+const checkStraight = (sortedValues) => {
+  if (sortedValues.length < 5) return false;
   
   // Verificar escalera normal
-  for (let i = 0; i <= sorted.length - 5; i++) {
-    if (sorted[i + 4] - sorted[i] === 4) return true;
+  for (let i = 0; i <= sortedValues.length - 5; i++) {
+    if (sortedValues[i + 4] - sortedValues[i] === 4) return true;
   }
   
   // Verificar escalera con As como 1 (A,2,3,4,5)
-  if (sorted.includes(14) && sorted.includes(2) && sorted.includes(3) && 
-      sorted.includes(4) && sorted.includes(5)) return true;
+  if (sortedValues.includes(14) && sortedValues.includes(2) && 
+      sortedValues.includes(3) && sortedValues.includes(4) && sortedValues.includes(5)) {
+    return true;
+  }
   
   return false;
-};
-
-const checkStraightFlush = (cards) => {
-  const suits = cards.map(card => card.suit);
-  if (new Set(suits).size !== 1) return false;
-  
-  const values = cards.map(card => card.numeric);
-  return checkStraight(values);
 };
 
 const compareHands = (playerHand, dealerHand) => {
   if (playerHand.rank > dealerHand.rank) return 1;
   if (playerHand.rank < dealerHand.rank) return -1;
   
-  // Si mismo rango, comparar carta alta
-  const playerHigh = Math.max(...playerHand.cards.map(c => c.numeric));
-  const dealerHigh = Math.max(...dealerHand.cards.map(c => c.numeric));
+  // Si mismo rango, comparar por cartas altas
+  const playerValues = playerHand.cards.map(c => c.numeric).sort((a, b) => b - a);
+  const dealerValues = dealerHand.cards.map(c => c.numeric).sort((a, b) => b - a);
   
-  if (playerHigh > dealerHigh) return 1;
-  if (playerHigh < dealerHigh) return -1;
+  for (let i = 0; i < 5; i++) {
+    if (playerValues[i] > dealerValues[i]) return 1;
+    if (playerValues[i] < dealerValues[i]) return -1;
+  }
   
   return 0; // Empate exacto
+};
+
+// Función para determinar si el jugador gana (5% de probabilidad)
+const shouldPlayerWin = () => {
+  return Math.random() < 0.05;
+};
+
+// Función para generar mano ganadora forzada
+const generateWinningHand = () => {
+  return [
+    { value: 'A', suit: '♥', numeric: 14 },
+    { value: 'K', suit: '♥', numeric: 13 },
+    { value: 'Q', suit: '♥', numeric: 12 },
+    { value: 'J', suit: '♥', numeric: 11 },
+    { value: '10', suit: '♥', numeric: 10 }
+  ];
+};
+
+// Función para generar mano perdedora para el dealer
+const generateLosingDealerHand = () => {
+  return [
+    { value: '2', suit: '♠', numeric: 2 },
+    { value: '3', suit: '♠', numeric: 3 },
+    { value: '4', suit: '♠', numeric: 4 },
+    { value: '5', suit: '♠', numeric: 5 },
+    { value: '7', suit: '♣', numeric: 7 }
+  ];
 };
 
 export default function CaribbeanStud({ navigation }) {
@@ -357,23 +694,77 @@ export default function CaribbeanStud({ navigation }) {
   const [ticketsWon, setTicketsWon] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
+  const [showShuffleAnimation, setShowShuffleAnimation] = useState(false);
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [playerHand, setPlayerHand] = useState(null);
+  const [dealerHand, setDealerHand] = useState(null);
+  const [showBlockModal, setShowBlockModal] = useState(false);
 
   const cardAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
 
+  // Bloquear navegación con modal de imagen
   useEffect(() => {
-    const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (gameInProgress) {
+        setShowBlockModal(true);
+        return true;
+      }
+      return false;
+    });
+
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      backHandler.remove();
+      unsubscribe();
     };
-    initializeAudio();
-  }, []);
+  }, [navigation, gameInProgress]);
+
+  // Bloquear la barra de pestañas con modal de imagen
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowBlockModal(true);
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
 
   const cardValues = {
     'A': 14, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 
@@ -393,8 +784,8 @@ export default function CaribbeanStud({ navigation }) {
     cardAnimations.setValue(0);
     Animated.timing(cardAnimations, {
       toValue: 1,
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
+      duration: 800,
+      easing: Easing.out(Easing.back(1.5)),
       useNativeDriver: true,
     }).start();
   };
@@ -424,23 +815,70 @@ export default function CaribbeanStud({ navigation }) {
     ]).start();
   };
 
-  const triggerWinAnimation = () => {
+  const triggerWinAnimation = (handName, winAmount) => {
     setShowWinAnimation(true);
     setTimeout(() => setShowWinAnimation(false), 3000);
   };
 
   const triggerLoseAnimation = () => {
     setShowLoseAnimation(true);
-    setTimeout(() => setShowLoseAnimation(false), 3000);
+    setTimeout(() => setShowLoseAnimation(false), 2500);
+  };
+
+  // Función cuando termina el barajeo
+  const handleShuffleComplete = () => {
+    setShowShuffleAnimation(false);
+    playSound("card");
+    
+    setTimeout(() => {
+      animateCards();
+      dealInitialCards();
+    }, 500);
+  };
+
+  const dealInitialCards = async () => {
+    // Determinar si el jugador ganará (5% de probabilidad)
+    const playerWillWin = shouldPlayerWin();
+    
+    let newPlayerCards, newDealerCards;
+    
+    if (playerWillWin) {
+      // Forzar mano ganadora para el jugador y perdedora para el dealer
+      newPlayerCards = generateWinningHand();
+      newDealerCards = generateLosingDealerHand();
+    } else {
+      // Mano normal (95% de probabilidad de perder)
+      newPlayerCards = Array(5).fill().map(() => dealCard());
+      newDealerCards = Array(5).fill().map(() => dealCard());
+    }
+    
+    // Evaluar manos
+    const playerEvaluation = { 
+      ...evaluateHand(newPlayerCards), 
+      cards: newPlayerCards 
+    };
+    const dealerEvaluation = { 
+      ...evaluateHand(newDealerCards), 
+      cards: newDealerCards 
+    };
+    
+    setPlayerCards(newPlayerCards);
+    setDealerCards(newDealerCards);
+    setPlayerHand(playerEvaluation);
+    setDealerHand(dealerEvaluation);
+    setGameState("playing");
+    setResult("¿RETIRARSE O APOSTAR?");
+
+    // Sonidos de reparto de cartas
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => playSound("card"), i * 200);
+    }
   };
 
   const startGame = async (betAmount) => {
     if (!canAfford(betAmount)) {
       await playSound("error");
-      Alert.alert(
-        "Fondos Insuficientes",
-        "No tienes suficientes Maneki Coins para esta apuesta"
-      );
+      Alert.alert("Fondos Insuficientes", "No tienes suficientes Maneki Coins para esta apuesta");
       return;
     }
 
@@ -449,84 +887,79 @@ export default function CaribbeanStud({ navigation }) {
     await playSound("coin");
     pulseAnimation();
 
-    animateCards();
+    // Marcar que el juego está en progreso
+    setGameInProgress(true);
 
-    setTimeout(async () => {
-      // Repartir cartas
-      const newPlayerCards = [dealCard(), dealCard(), dealCard(), dealCard(), dealCard()];
-      const newDealerCards = [dealCard(), dealCard(), dealCard(), dealCard(), dealCard()];
-      
-      setPlayerCards(newPlayerCards);
-      setDealerCards(newDealerCards);
-      setGameState("playing");
-      setResult("");
-      setTicketsWon(0);
-
-      await playSound("card");
-    }, 400);
+    // Mostrar animación de barajeo
+    setShowShuffleAnimation(true);
+    setResult("BARAJANDO CARTAS...");
+    await playSound("shuffle");
   };
 
   const fold = async () => {
     setResult("Te retiras. Pierdes la apuesta");
     setGameState("result");
-    setTicketsWon(getTicketRewards(bet, false));
-    await addTickets(getTicketRewards(bet, false), "Tickets por retiro - Caribbean Stud");
+    setTicketsWon(0);
+    setGameInProgress(false);
     await playSound("lose");
     triggerLoseAnimation();
   };
 
   const call = async () => {
-    const dealerQualifies = dealerCards.some(card => 
-      card.value === 'A' || card.value === 'K' || card.value === 'Q'
-    );
+    await playSound("click");
+    pulseAnimation();
+
+    // Revelar cartas del dealer con animación
+    setResult("REVELANDO CARTAS...");
     
-    if (!dealerQualifies) {
-      await addCoins(bet, "Dealer no califica - Recupera apuesta");
-      setResult("Dealer no califica. Recuperas tu apuesta");
-      setTicketsWon(getTicketRewards(bet, false));
-      await addTickets(getTicketRewards(bet, false), "Tickets - Dealer no califica");
-      await playSound("click");
-    } else {
-      // Evaluar manos
-      const playerEvaluation = evaluateHand(playerCards);
-      const dealerEvaluation = evaluateHand(dealerCards);
+    setTimeout(async () => {
+      const dealerQualifies = dealerHand.rank >= 2 || 
+        dealerCards.some(card => card.value === 'A' || card.value === 'K' || card.value === 'Q');
       
-      const comparison = compareHands(
-        { ...playerEvaluation, cards: playerCards },
-        { ...dealerEvaluation, cards: dealerCards }
-      );
-      
-      if (comparison > 0) {
-        // Jugador gana
-        const winAmount = bet * 2;
-        const ticketReward = getTicketRewards(bet, true, playerEvaluation.rank >= 4 ? 2 : 1);
-        
-        await addCoins(winAmount, `Ganancia en Caribbean Stud - ${playerEvaluation.name}`);
-        await addTickets(ticketReward, `Ganancia - ${playerEvaluation.name}`);
-        
-        setResult(`¡Ganas con ${playerEvaluation.name}! +${winAmount} MC + ${ticketReward} Tickets`);
-        setTicketsWon(ticketReward);
-        await playSound("win");
-        triggerWinAnimation();
-      } else if (comparison < 0) {
-        // Dealer gana
-        setResult(`Dealer gana con ${dealerEvaluation.name}`);
-        setTicketsWon(getTicketRewards(bet, false));
-        await addTickets(getTicketRewards(bet, false), "Tickets por pérdida");
-        await playSound("lose");
-        triggerLoseAnimation();
-      } else {
-        // Empate
-        await addCoins(bet, "Empate - Recupera apuesta");
-        setResult("Empate. Recuperas tu apuesta");
-        setTicketsWon(getTicketRewards(bet, false));
-        await addTickets(getTicketRewards(bet, false), "Tickets por empate");
+      let winAmount = 0;
+      let ticketReward = 0;
+      let resultMessage = "";
+
+      if (!dealerQualifies) {
+        // Dealer no califica - recupera apuesta
+        winAmount = bet;
+        resultMessage = "MANEKI NO CALIFICA. RECUPERAS TU APUESTA";
         await playSound("click");
+      } else {
+        const comparison = compareHands(playerHand, dealerHand);
+        
+        if (comparison > 0) {
+          // Jugador gana - solo dar tickets
+          ticketReward = getTicketRewards(bet, playerHand.multiplier);
+          await addTickets(ticketReward, `Ganancia - ${playerHand.name}`);
+          resultMessage = `¡${playerHand.name}! GANAS ${ticketReward} TICKETS`;
+          await playSound("win");
+          triggerWinAnimation(playerHand.name, ticketReward);
+        } else if (comparison < 0) {
+          // Dealer gana - NO dar nada
+          resultMessage = `MANEKI GANA CON ${dealerHand.name}`;
+          ticketReward = 0;
+          await playSound("lose");
+          triggerLoseAnimation();
+        } else {
+          // Empate - recupera apuesta
+          winAmount = bet;
+          resultMessage = "EMPATE. RECUPERAS TU APUESTA";
+          await playSound("click");
+        }
       }
-    }
-    
-    setGameState("result");
-    animateResult();
+
+      // Solo agregar monedas si hay ganancia (solo en casos de recuperación)
+      if (winAmount > 0) {
+        await addCoins(winAmount, "Recupera apuesta - Caribbean Stud");
+      }
+
+      setResult(resultMessage);
+      setTicketsWon(ticketReward);
+      setGameState("result");
+      setGameInProgress(false);
+      animateResult();
+    }, 1000);
   };
 
   const resetGame = async () => {
@@ -538,6 +971,10 @@ export default function CaribbeanStud({ navigation }) {
     setTicketsWon(0);
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
+    setShowShuffleAnimation(false);
+    setPlayerHand(null);
+    setDealerHand(null);
+    setGameInProgress(false);
     await playSound("click");
   };
 
@@ -547,13 +984,19 @@ export default function CaribbeanStud({ navigation }) {
         {
           translateY: cardAnimations.interpolate({
             inputRange: [0, 1],
-            outputRange: [-30, 0],
+            outputRange: [-50, 0],
           }),
         },
         {
           scale: cardAnimations.interpolate({
             inputRange: [0, 1],
-            outputRange: [0.8, 1],
+            outputRange: [0.5, 1],
+          }),
+        },
+        {
+          rotate: cardAnimations.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['-10deg', '0deg'],
           }),
         },
       ],
@@ -565,36 +1008,34 @@ export default function CaribbeanStud({ navigation }) {
     };
 
     return (
-      <Animated.View key={index} style={[styles.card, cardAnimation]}>
+      <Animated.View 
+        key={index} 
+        style={[
+          styles.card, 
+          cardAnimation,
+          { zIndex: 5 - index }
+        ]}
+      >
         {hide ? (
           <View style={styles.hiddenCard}>
-            <View style={styles.cardPattern} />
+            <View style={styles.cardBackPattern}>
+              <Text style={styles.cardBackText}>MANEKI</Text>
+              <View style={styles.cardBackDesign} />
+            </View>
           </View>
         ) : (
           <>
-            <Text
-              style={[styles.cardValue, { color: getCardColor(card.suit) }]}
-            >
+            <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
               {card.value}
             </Text>
             <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
               {card.suit}
             </Text>
             <View style={styles.cardCorner}>
-              <Text
-                style={[
-                  styles.cardCornerValue,
-                  { color: getCardColor(card.suit) },
-                ]}
-              >
+              <Text style={[styles.cardCornerValue, { color: getCardColor(card.suit) }]}>
                 {card.value}
               </Text>
-              <Text
-                style={[
-                  styles.cardCornerSuit,
-                  { color: getCardColor(card.suit) },
-                ]}
-              >
+              <Text style={[styles.cardCornerSuit, { color: getCardColor(card.suit) }]}>
                 {card.suit}
               </Text>
             </View>
@@ -608,50 +1049,47 @@ export default function CaribbeanStud({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* Modal de bloqueo con imagen */}
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
+
       {/* Animaciones */}
+      <ShuffleAnimation show={showShuffleAnimation} onComplete={handleShuffleComplete} />
       <WinAnimation show={showWinAnimation} />
       <LoseAnimation show={showLoseAnimation} />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header mejorado */}
+        {/* Header */}
         <View style={styles.header}>
-          {/* Saldo y Tickets al lado izquierdo */}
           <View style={styles.balancesContainer}>
             <View style={styles.balanceRow}>
-              {/* Saldo */}
               <View style={styles.balanceItem}>
                 <View style={styles.coinsDisplay}>
-                  <Image
-                    source={require("../../assets/dinero.png")}
-                    style={styles.coinIcon}
-                  />
-                  <Text style={styles.balanceText}>
-                    {manekiCoins.toLocaleString()}
-                  </Text>
+                  <Image source={require("../../assets/dinero.png")} style={styles.coinIcon} />
+                  <Text style={styles.balanceText}>{manekiCoins.toLocaleString()}</Text>
                 </View>
               </View>
-
-              {/* Tickets */}
               <View style={styles.balanceItem}>
                 <View style={styles.ticketsDisplay}>
-                  <Image
-                    source={require("../../assets/TICKET.png")}
-                    style={styles.ticketIcon}
-                  />
-                  <Text style={styles.balanceText}>
-                    {tickets.toLocaleString()}
-                  </Text>
+                  <Image source={require("../../assets/TICKET.png")} style={styles.ticketIcon} />
+                  <Text style={styles.balanceText}>{tickets.toLocaleString()}</Text>
                 </View>
               </View>
             </View>
           </View>
-
-       
-          {/* Espacio vacío para balancear */}
           <View style={styles.emptySpace} />
         </View>
 
@@ -660,7 +1098,7 @@ export default function CaribbeanStud({ navigation }) {
           <View style={styles.areaHeader}>
             <Text style={styles.areaTitle}>MANEKI</Text>
             <Text style={styles.areaScore}>
-              {gameState === "playing" ? "?" : ""}
+              {dealerHand ? dealerHand.name : (gameState === "playing" ? "???" : "")}
             </Text>
           </View>
           <View style={styles.cardsContainer}>
@@ -668,11 +1106,6 @@ export default function CaribbeanStud({ navigation }) {
               renderCard(card, index, gameState === "playing")
             )}
           </View>
-          {gameState !== "betting" && dealerCards.length > 0 && (
-            <Text style={styles.handInfo}>
-              {gameState === "playing" ? "Cartas ocultas" : evaluateHand(dealerCards).name}
-            </Text>
-          )}
         </View>
 
         {/* Mensaje y resultado */}
@@ -695,10 +1128,11 @@ export default function CaribbeanStud({ navigation }) {
           ]}
         >
           <Text style={styles.message}>
-            {result || (gameState === "betting" ? "SELECCIONE SU APUESTA" : "¿RETIRARSE O APOSTAR?")}
+            {result || (gameState === "betting" ? "SELECCIONE SU APUESTA" : "")}
           </Text>
           {ticketsWon > 0 && gameState === "result" && (
             <View style={styles.ticketsWonContainer}>
+              <Ionicons name="ticket" size={16} color="#10B981" />
               <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets</Text>
             </View>
           )}
@@ -709,7 +1143,7 @@ export default function CaribbeanStud({ navigation }) {
           <View style={styles.areaHeader}>
             <Text style={styles.areaTitle}>JUGADOR</Text>
             <Text style={styles.areaScore}>
-              {playerCards.length > 0 ? evaluateHand(playerCards).name : ""}
+              {playerHand ? playerHand.name : ""}
             </Text>
           </View>
           <View style={styles.cardsContainer}>
@@ -722,7 +1156,6 @@ export default function CaribbeanStud({ navigation }) {
           {gameState === "betting" && (
             <View style={styles.betContainer}>
               <Text style={styles.betTitle}>SELECCIONE SU APUESTA</Text>
-
               <View style={styles.betAmounts}>
                 {betAmounts.map((amount) => (
                   <TouchableOpacity
@@ -743,28 +1176,22 @@ export default function CaribbeanStud({ navigation }) {
                     }}
                     disabled={!canAfford(amount)}
                   >
-                    <Text style={styles.betAmountText}>
-                      {amount.toLocaleString()}
-                    </Text>
+                    <Text style={styles.betAmountText}>{amount.toLocaleString()}</Text>
                     <Text style={styles.ticketRewardText}>
-                      +{getTicketRewards(amount, true)} tickets
+                      +{getTicketRewards(amount, 1)} tickets
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={styles.currentBet}>
-                {bet > 0
-                  ? `Apuesta: ${bet.toLocaleString()} MC`
-                  : "Seleccione un monto"}
+                {bet > 0 ? `Apuesta: ${bet.toLocaleString()} MC` : "Seleccione un monto"}
               </Text>
-
               <TouchableOpacity
                 style={[styles.startButton, bet === 0 && styles.disabledButton]}
                 onPress={() => bet > 0 && startGame(bet)}
                 disabled={bet === 0}
               >
-                <Ionicons name="play" size={18} color="#FFF" />
+                <Ionicons name="play" size={20} color="#FFF" />
                 <Text style={styles.startButtonText}>INICIAR JUEGO</Text>
               </TouchableOpacity>
             </View>
@@ -773,11 +1200,11 @@ export default function CaribbeanStud({ navigation }) {
           {gameState === "playing" && (
             <View style={styles.gameButtons}>
               <TouchableOpacity style={styles.foldButton} onPress={fold}>
-                <Ionicons name="exit-outline" size={18} color="#FFF" />
+                <Ionicons name="exit-outline" size={20} color="#FFF" />
                 <Text style={styles.actionButtonText}>RETIRARSE</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.callButton} onPress={call}>
-                <Ionicons name="trending-up" size={18} color="#FFF" />
+                <Ionicons name="trending-up" size={20} color="#FFF" />
                 <Text style={styles.actionButtonText}>APOSTAR</Text>
               </TouchableOpacity>
             </View>
@@ -785,15 +1212,58 @@ export default function CaribbeanStud({ navigation }) {
 
           {gameState === "result" && (
             <View style={styles.endButtons}>
-              <TouchableOpacity
-                style={styles.playAgainButton}
-                onPress={resetGame}
-              >
-                <Ionicons name="refresh" size={18} color="#FFF" />
+              <TouchableOpacity style={styles.playAgainButton} onPress={resetGame}>
+                <Ionicons name="refresh" size={20} color="#FFF" />
                 <Text style={styles.playAgainText}>JUGAR DE NUEVO</Text>
               </TouchableOpacity>
             </View>
           )}
+        </View>
+
+        {/* Tabla de pagos */}
+        <View style={styles.payouts}>
+          <Text style={styles.payoutsTitle}>TABLA DE PREMIOS</Text>
+          <View style={styles.payoutGrid}>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>ESCALERA REAL</Text>
+              <Text style={styles.payoutMultiplier}>100x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>ESCALERA DE COLOR</Text>
+              <Text style={styles.payoutMultiplier}>50x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>PÓKER</Text>
+              <Text style={styles.payoutMultiplier}>20x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>FULL HOUSE</Text>
+              <Text style={styles.payoutMultiplier}>7x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>COLOR</Text>
+              <Text style={styles.payoutMultiplier}>5x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>ESCALERA</Text>
+              <Text style={styles.payoutMultiplier}>4x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>TRÍO</Text>
+              <Text style={styles.payoutMultiplier}>3x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>DOBLE PAREJA</Text>
+              <Text style={styles.payoutMultiplier}>2x</Text>
+            </View>
+            <View style={styles.payoutRow}>
+              <Text style={styles.payoutHand}>PAREJA J+</Text>
+              <Text style={styles.payoutMultiplier}>1x</Text>
+            </View>
+          </View>
+          <Text style={styles.payoutNote}>
+            * Maneki debe tener A-K-Q o mejor para calificar
+          </Text>
         </View>
 
         <View style={styles.bottomSpacer} />
@@ -820,7 +1290,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 15,
+    marginBottom: 20,
     paddingHorizontal: 5,
   },
   balancesContainer: {
@@ -838,124 +1308,104 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#1A1A1A",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: "#FFD700",
-    gap: 5,
-    minWidth: 80,
+    gap: 6,
+    minWidth: 85,
   },
   ticketsDisplay: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#1A1A1A",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: "#10B981",
-    gap: 5,
-    minWidth: 80,
+    gap: 6,
+    minWidth: 85,
   },
   coinIcon: {
-    width: 14,
-    height: 14,
+    width: 16,
+    height: 16,
     resizeMode: "contain",
   },
   ticketIcon: {
-    width: 14,
-    height: 14,
+    width: 16,
+    height: 16,
     resizeMode: "contain",
   },
   balanceText: {
     color: "#FFD700",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "bold",
-  },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    top: 0,
-  },
-  title: {
-    color: "#FFD700",
-    fontSize: 18,
-    fontWeight: "bold",
-    letterSpacing: 1,
   },
   emptySpace: {
-    width: 80,
+    width: 85,
   },
   area: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 2,
     borderColor: "#333",
-    minHeight: 130,
+    minHeight: 150,
   },
   areaHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
   areaTitle: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "bold",
   },
   areaScore: {
     color: "#FFD700",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "bold",
     backgroundColor: "rgba(139, 0, 0, 0.3)",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#FFD700",
-  },
-  handInfo: {
-    color: "#999",
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: 8,
-    fontStyle: "italic",
   },
   cardsContainer: {
     flexDirection: "row",
     justifyContent: "center",
     flexWrap: "wrap",
     alignItems: "center",
+    gap: 8,
   },
   card: {
-    width: 55,
-    height: 77,
+    width: 60,
+    height: 84,
     backgroundColor: "#FFFFFF",
-    borderRadius: 6,
-    margin: 3,
+    borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
-    elevation: 6,
+    elevation: 8,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
     borderWidth: 1,
     borderColor: "#E5E5E5",
     position: "relative",
   },
   cardValue: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 2,
+    marginBottom: 4,
   },
   cardSuit: {
-    fontSize: 18,
+    fontSize: 20,
   },
   cardCorner: {
     position: "absolute",
@@ -964,89 +1414,109 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cardCornerValue: {
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: "bold",
   },
   cardCornerSuit: {
-    fontSize: 6,
+    fontSize: 7,
   },
   hiddenCard: {
     width: "100%",
     height: "100%",
     backgroundColor: "#8B0000",
-    borderRadius: 6,
+    borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
-  cardPattern: {
-    width: "70%",
-    height: "70%",
+  cardBackPattern: {
+    width: "80%",
+    height: "80%",
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#A52A2A",
-    borderRadius: 4,
-    opacity: 0.6,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#FFF",
+  },
+  cardBackText: {
+    color: "#FFF",
+    fontSize: 10,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  cardBackDesign: {
+    width: 20,
+    height: 20,
+    backgroundColor: "#FFF",
+    borderRadius: 10,
+    opacity: 0.3,
   },
   messageContainer: {
     alignItems: "center",
-    marginVertical: 10,
-    padding: 12,
+    marginVertical: 16,
+    padding: 16,
     backgroundColor: "rgba(26, 26, 26, 0.9)",
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 2,
     borderColor: "#FFD700",
-    minHeight: 60,
+    minHeight: 70,
     justifyContent: "center",
   },
   message: {
     color: "#FFD700",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "bold",
     textAlign: "center",
-    lineHeight: 18,
+    lineHeight: 20,
   },
   ticketsWonContainer: {
-    marginTop: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
     backgroundColor: "rgba(16, 185, 129, 0.2)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#10B981",
+    gap: 6,
   },
   ticketsWonText: {
     color: "#10B981",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "bold",
   },
   controls: {
-    marginTop: 5,
-    marginBottom: 15,
+    marginTop: 8,
+    marginBottom: 20,
   },
   betContainer: {
     alignItems: "center",
   },
   betTitle: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "bold",
-    marginBottom: 15,
+    marginBottom: 16,
     textAlign: "center",
   },
   betAmounts: {
     flexDirection: "row",
     justifyContent: "center",
     flexWrap: "wrap",
-    marginBottom: 15,
-    gap: 8,
+    marginBottom: 16,
+    gap: 10,
   },
   betAmountButton: {
     backgroundColor: "#2A2A2A",
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#444",
-    minWidth: 90,
+    minWidth: 95,
   },
   selectedBet: {
     borderColor: "#FFD700",
@@ -1054,23 +1524,24 @@ const styles = StyleSheet.create({
   },
   betAmountText: {
     color: "#FFD700",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "bold",
   },
   ticketRewardText: {
     color: "#10B981",
-    fontSize: 10,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 3,
+    textAlign: "center",
   },
   currentBet: {
     color: "#FFD700",
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "bold",
-    marginBottom: 15,
+    marginBottom: 16,
     textAlign: "center",
     backgroundColor: "rgba(139, 0, 0, 0.3)",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: "#FFD700",
@@ -1079,53 +1550,53 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#10B981",
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 25,
     borderWidth: 2,
     borderColor: "#059669",
-    gap: 8,
+    gap: 10,
   },
   startButtonText: {
     color: "#FFF",
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 16,
   },
   gameButtons: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 10,
+    gap: 12,
   },
   foldButton: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#DC2626",
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 25,
     borderWidth: 2,
     borderColor: "#B91C1C",
     flex: 1,
     justifyContent: "center",
-    gap: 6,
+    gap: 8,
   },
   callButton: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#2563EB",
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 25,
     borderWidth: 2,
     borderColor: "#1D4ED8",
     flex: 1,
     justifyContent: "center",
-    gap: 6,
+    gap: 8,
   },
   actionButtonText: {
     color: "#FFF",
     fontWeight: "bold",
-    fontSize: 12,
+    fontSize: 14,
   },
   endButtons: {
     alignItems: "center",
@@ -1134,17 +1605,59 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#10B981",
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 25,
     borderWidth: 2,
     borderColor: "#059669",
-    gap: 8,
+    gap: 10,
   },
   playAgainText: {
     color: "#FFF",
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 16,
+  },
+  payouts: {
+    backgroundColor: "rgba(26, 26, 26, 0.9)",
+    padding: 18,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  payoutsTitle: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 14,
+    textAlign: "center",
+  },
+  payoutGrid: {
+    gap: 6,
+  },
+  payoutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  payoutHand: {
+    color: "#FFF",
+    fontSize: 13,
+    flex: 2,
+  },
+  payoutMultiplier: {
+    color: "#10B981",
+    fontSize: 13,
+    fontWeight: "bold",
+    flex: 1,
+    textAlign: "right",
+  },
+  payoutNote: {
+    color: "#888",
+    fontSize: 11,
+    textAlign: "center",
+    marginTop: 12,
+    fontStyle: "italic",
   },
   bottomSpacer: {
     height: 10,
@@ -1157,19 +1670,19 @@ const styles = StyleSheet.create({
   // Estilos para animaciones
   animationContainer: {
     position: "absolute",
-    top: "50%",
+    top: "40%",
     left: "50%",
-    marginLeft: -100,
-    marginTop: -80,
+    marginLeft: -120,
+    marginTop: -90,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    padding: 25,
-    borderRadius: 20,
+    backgroundColor: "rgba(0, 0, 0, 0.92)",
+    padding: 28,
+    borderRadius: 24,
     borderWidth: 4,
-    width: 200,
-    height: 160,
+    width: 240,
+    height: 180,
   },
   winAnimation: {
     borderColor: "#FFD700",
@@ -1179,16 +1692,150 @@ const styles = StyleSheet.create({
   },
   winText: {
     color: "#FFD700",
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: "bold",
-    marginTop: 10,
+    marginTop: 8,
     textAlign: "center",
+  },
+  winAmountText: {
+    color: "#10B981",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginTop: 4,
   },
   loseText: {
     color: "#EF4444",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "bold",
-    marginTop: 10,
+    marginTop: 8,
     textAlign: "center",
+  },
+  confetti: {
+    position: "absolute",
+    top: -20,
+    right: -20,
+  },
+  confettiText: {
+    fontSize: 24,
+  },
+  // Estilos para animación de barajeo
+  shuffleContainer: {
+    position: "absolute",
+    top: "35%",
+    left: "50%",
+    marginLeft: -120,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    padding: 28,
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: "#FFD700",
+    width: 240,
+    minHeight: 160,
+  },
+  shuffleText: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#333',
+    borderRadius: 4,
+    marginVertical: 12,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#FFD700',
+    borderRadius: 4,
+  },
+  shuffleCardsContainer: {
+    flexDirection: "row",
+    marginBottom: 16,
+    position: "relative",
+    height: 60,
+  },
+  shuffleCard: {
+    width: 45,
+    height: 60,
+    backgroundColor: "#1a365d",
+    borderRadius: 6,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#2d3748",
+    position: "absolute",
+    left: 0,
+    right: 0,
+    marginHorizontal: "auto",
+  },
+  shuffleCardContent: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  shuffleCardPattern: {
+    color: "#e53e3e",
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: 'center',
+  },
+  deck: {
+    width: 50,
+    height: 70,
+    backgroundColor: "#8B0000",
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#A52A2A",
+  },
+  deckText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  // Estilos para el indicador de juego en progreso
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  // NUEVOS ESTILOS PARA EL MODAL TRANSPARENTE
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,
+    height: height * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
   },
 });

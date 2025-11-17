@@ -1,5 +1,5 @@
 // src/games/cards/Poker.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -10,118 +10,136 @@ import {
   Dimensions,
   ScrollView,
   SafeAreaView,
-  Vibration,
   Alert,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
-import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos para Poker
-const useGameSounds = () => {
-  const [sounds, setSounds] = useState({});
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
 
-  const loadSounds = async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+  return (
+    <TouchableOpacity 
+      style={styles.tabBlocker} 
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>
+            Termina el juego primero
+          </Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
 
-      const soundObjects = {};
-      const soundTypes = [
-        { key: "card", file: require("../../assets/sounds/card.mp3") },
-        { key: "click", file: require("../../assets/sounds/click.mp3") },
-        { key: "coin", file: require("../../assets/sounds/coin.mp3") },
-        { key: "error", file: require("../../assets/sounds/error.mp3") },
-        { key: "success", file: require("../../assets/sounds/success.mp3") },
-      ];
-
-      for (const { key, file } of soundTypes) {
-        try {
-          const soundObject = new Audio.Sound();
-          await soundObject.loadAsync(file);
-          soundObjects[key] = soundObject;
-        } catch (error) {
-          console.log(` Error cargando sonido ${key}:`, error);
-        }
-      }
-
-      setSounds(soundObjects);
-    } catch (error) {
-      console.log(" Error inicializando sistema de sonido:", error);
-    }
-  };
-
-  const playSound = async (type) => {
-    try {
-      let soundKey;
-      switch (type) {
-        case "win":
-          soundKey = "success";
-          break;
-        case "lose":
-          soundKey = "error";
-          break;
-        case "card":
-          soundKey = "card";
-          break;
-        case "chip":
-        case "coin":
-          soundKey = "coin";
-          break;
-        case "click":
-        default:
-          soundKey = "click";
-      }
-
-      if (sounds[soundKey]) {
-        await sounds[soundKey].replayAsync();
-      } else {
-        playVibration(type);
-      }
-    } catch (error) {
-      playVibration(type);
-    }
-  };
-
-  const playVibration = (type) => {
-    switch (type) {
-      case "win":
-        Vibration.vibrate([0, 100, 50, 100, 50, 100]);
-        break;
-      case "lose":
-        Vibration.vibrate([0, 300, 100, 300]);
-        break;
-      case "card":
-        Vibration.vibrate(30);
-        break;
-      case "chip":
-      case "coin":
-        Vibration.vibrate(20);
-        break;
-      case "click":
-      default:
-        Vibration.vibrate(15);
-    }
-  };
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
 
   useEffect(() => {
-    loadSounds();
-    return () => {
-      Object.values(sounds).forEach((sound) => {
-        if (sound) sound.unloadAsync();
-      });
-    };
-  }, []);
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
 
-  return playSound;
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        // Animación de salida
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 0.8,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 100,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          onClose();
+        });
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlayTransparent}>
+        <Animated.View 
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </View>
+    </Modal>
+  );
 };
 
 // Componente de animación de pérdida
@@ -152,7 +170,7 @@ const LoseAnimation = ({ show }) => {
 
   const shakeInterpolation = shakeAnim.interpolate({
     inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+    outputRange: [0, -10, 8, -8, 6, -6, 4, -4, 2, -2, 0],
   });
 
   if (!show) return null;
@@ -168,7 +186,7 @@ const LoseAnimation = ({ show }) => {
       ]}
     >
       <Ionicons name="sad-outline" size={60} color="#EF4444" />
-      <Text style={styles.loseText}>¡PERDISTE!</Text>
+      <Text style={styles.loseText}>PERDISTE</Text>
     </Animated.View>
   );
 };
@@ -176,35 +194,52 @@ const LoseAnimation = ({ show }) => {
 // Componente de animación de victoria
 const WinAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
+  const [rotateAnim] = useState(new Animated.Value(0));
   const [pulseAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {
     if (show) {
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, {
+              toValue: 1.2,
+              duration: 600,
+              useNativeDriver: true,
+            }),
+            Animated.timing(pulseAnim, {
+              toValue: 1,
+              duration: 600,
+              useNativeDriver: true,
+            }),
+          ])
+        ),
+        Animated.loop(
+          Animated.timing(rotateAnim, {
             toValue: 1,
-            duration: 500,
+            duration: 3000,
+            easing: Easing.linear,
             useNativeDriver: true,
-          }),
-        ])
-      ).start();
+          })
+        ),
+      ]).start();
     } else {
       scaleAnim.setValue(0);
+      rotateAnim.setValue(0);
       pulseAnim.setValue(1);
     }
   }, [show]);
+
+  const rotateInterpolation = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
 
   if (!show) return null;
 
@@ -218,48 +253,202 @@ const WinAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="trophy" size={60} color="#FFD700" />
+      <Animated.View
+        style={{
+          transform: [{ rotate: rotateInterpolation }],
+        }}
+      >
+        <Ionicons name="trophy" size={60} color="#FFD700" />
+      </Animated.View>
       <Text style={styles.winText}>¡GANASTE!</Text>
     </Animated.View>
   );
 };
 
-// Tabla de premios de tickets para Poker
+// Componente de Suerte Aumentada - Solo imagen
+const LuckBoostImage = ({ show, winStreak, onHide }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+
+  useEffect(() => {
+    if (show) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 150,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        onHide();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+    }
+  }, [show]);
+
+  if (!show) return null;
+
+  const getImageSource = () => {
+    if (winStreak >= 8) {
+      return require("../../assets/suertex50.png");
+    } else if (winStreak >= 5) {
+      return require("../../assets/suertex20.png");
+    } else {
+      return require("../../assets/suertex10.png");
+    }
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.luckBoostImageContainer,
+        {
+          opacity: fadeAnim,
+          transform: [{ scale: scaleAnim }],
+        },
+      ]}
+    >
+      <Image 
+        source={getImageSource()} 
+        style={styles.luckBoostImageLarge}
+        resizeMode="contain"
+      />
+    </Animated.View>
+  );
+};
+
+// Componente de carta profesional con animaciones mejoradas
+const Card = ({ card, index, hide = false, delay = 0, type, cardAnim }) => {
+  const getCardColor = (suit) => {
+    return suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
+  };
+
+  const cardAnimation = {
+    transform: [
+      {
+        translateY: cardAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [-50, 0],
+        }),
+      },
+      {
+        scale: cardAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.8, 1],
+        }),
+      },
+    ],
+    opacity: cardAnim,
+  };
+
+  if (hide) {
+    return (
+      <Animated.View style={[styles.card, styles.hiddenCard, cardAnimation]}>
+        <View style={styles.cardBackPattern}>
+          <View style={styles.cardBackLogo}>
+            <Ionicons name="diamond" size={20} color="#8B0000" />
+          </View>
+        </View>
+      </Animated.View>
+    );
+  }
+
+  return (
+    <Animated.View style={[styles.card, cardAnimation]}>
+      <View style={styles.cardContent}>
+        {/* Esquina superior izquierda */}
+        <View style={styles.cardCornerTop}>
+          <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
+            {card.value}
+          </Text>
+          <Text style={[styles.cardSuitSmall, { color: getCardColor(card.suit) }]}>
+            {card.suit}
+          </Text>
+        </View>
+
+        {/* Centro de la carta */}
+        <View style={styles.cardCenter}>
+          <Text style={[styles.cardSuitLarge, { color: getCardColor(card.suit) }]}>
+            {card.suit}
+          </Text>
+        </View>
+
+        {/* Esquina inferior derecha (rotada) */}
+        <View style={styles.cardCornerBottom}>
+          <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
+            {card.value}
+          </Text>
+          <Text style={[styles.cardSuitSmall, { color: getCardColor(card.suit) }]}>
+            {card.suit}
+          </Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+};
+
+// Tabla de premios de tickets para Poker - VALORES CONSISTENTES CON BLACKJACK
 const getTicketRewards = (betAmount, handRank) => {
+  // Mismos valores base que Blackjack para mantener consistencia
   const baseRewards = {
-    50: { 1: 30, 2: 60, 3: 90, 4: 120, 5: 150, 6: 180, 7: 210, 8: 240, 9: 300 },
-    100: {
-      1: 60,
-      2: 120,
-      3: 180,
-      4: 240,
-      5: 300,
-      6: 360,
-      7: 420,
-      8: 480,
-      9: 600,
+    50: { 
+      0: 60,    // Carta Alta
+      1: 120,   // Pareja
+      2: 180,   // Doble Pareja
+      3: 240,   // Trío
+      4: 300,   // Escalera
+      5: 360,   // Color
+      6: 420,   // Full House
+      7: 480,   // Póquer
+      8: 600,   // Escalera de Color
+      9: 750    // Escalera Real
     },
-    250: {
-      1: 150,
-      2: 300,
-      3: 450,
-      4: 600,
-      5: 750,
-      6: 900,
-      7: 1050,
-      8: 1200,
-      9: 1500,
+    100: { 
+      0: 120,   // Carta Alta
+      1: 240,   // Pareja
+      2: 360,   // Doble Pareja
+      3: 480,   // Trío
+      4: 600,   // Escalera
+      5: 720,   // Color
+      6: 840,   // Full House
+      7: 960,   // Póquer
+      8: 1200,  // Escalera de Color
+      9: 1500   // Escalera Real
     },
-    500: {
-      1: 300,
-      2: 600,
-      3: 900,
-      4: 1200,
-      5: 1500,
-      6: 1800,
-      7: 2100,
-      8: 2400,
-      9: 3000,
+    250: { 
+      0: 300,   // Carta Alta
+      1: 600,   // Pareja
+      2: 900,   // Doble Pareja
+      3: 1200,  // Trío
+      4: 1500,  // Escalera
+      5: 1800,  // Color
+      6: 2100,  // Full House
+      7: 2400,  // Póquer
+      8: 3000,  // Escalera de Color
+      9: 3750   // Escalera Real
+    },
+    500: { 
+      0: 600,   // Carta Alta
+      1: 1200,  // Pareja
+      2: 1800,  // Doble Pareja
+      3: 2400,  // Trío
+      4: 3000,  // Escalera
+      5: 3600,  // Color
+      6: 4200,  // Full House
+      7: 4800,  // Póquer
+      8: 6000,  // Escalera de Color
+      9: 7500   // Escalera Real
     },
   };
   return baseRewards[betAmount]?.[handRank] || 0;
@@ -269,12 +458,10 @@ export default function Poker({ navigation }) {
   const {
     manekiCoins,
     tickets,
-    addCoins,
     subtractCoins,
     addTickets,
     canAfford,
   } = useCoins();
-  const playSound = useGameSounds();
 
   const [bet, setBet] = useState(100);
   const [gameState, setGameState] = useState("betting");
@@ -282,25 +469,101 @@ export default function Poker({ navigation }) {
   const [communityCards, setCommunityCards] = useState([]);
   const [dealerCards, setDealerCards] = useState([]);
   const [result, setResult] = useState("");
-  const [winAmount, setWinAmount] = useState(0);
   const [round, setRound] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [ticketsWon, setTicketsWon] = useState(0);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [message, setMessage] = useState("SELECCIONE SU APUESTA");
+  const [cardDealAnims] = useState([]);
+  
+  // Estados CORREGIDOS: ahora es racha de victorias
+  const [winStreak, setWinStreak] = useState(0);
+  const [showLuckBoost, setShowLuckBoost] = useState(false);
 
-  const cardAnimations = useState(new Animated.Value(0))[0];
-  const resultAnimations = useState(new Animated.Value(0))[0];
+  // NUEVOS ESTADOS para controlar la navegación
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
+
+  const messageAnim = useRef(new Animated.Value(0)).current;
   const [pulseAnim] = useState(new Animated.Value(1));
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
 
+  // Inicializar animaciones para cada carta
   useEffect(() => {
-    Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-    });
+    cardDealAnims.length = 0;
+    for (let i = 0; i < 9; i++) { // 2 player + 2 dealer + 5 community
+      cardDealAnims.push(new Animated.Value(0));
+    }
   }, []);
+
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR - NUEVO
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowTabBlocker(true);
+        setTimeout(() => setShowTabBlocker(false), 2000);
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso - CORREGIDO
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameState === "dealing" || gameState === "flop" || gameState === "turn" || gameState === "river" || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener('beforeRemove', (e) => {
+      if (gameState === "dealing" || gameState === "flop" || gameState === "turn" || gameState === "river" || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, gameState, gameInProgress]);
+
+  // Función para determinar si el jugador gana automáticamente (5% de probabilidad)
+  const shouldAutoWin = () => {
+    return Math.random() < 0.05;
+  };
 
   const cardValues = {
     A: 14,
@@ -327,19 +590,45 @@ export default function Poker({ navigation }) {
     return { value, suit };
   };
 
-  const animateCards = () => {
-    cardAnimations.setValue(0);
-    Animated.timing(cardAnimations, {
-      toValue: 1,
-      duration: 400,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+  // Función CORREGIDA para animar cartas
+  const animateCardDeal = (cardIndex, delay = 0) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        Animated.sequence([
+          Animated.timing(cardDealAnims[cardIndex], {
+            toValue: 1,
+            duration: 400,
+            easing: Easing.out(Easing.back(1.5)),
+            useNativeDriver: true,
+          }),
+          Animated.spring(cardDealAnims[cardIndex], {
+            toValue: 1,
+            tension: 150,
+            friction: 5,
+            useNativeDriver: true,
+          }),
+        ]).start(resolve);
+      }, delay);
+    });
   };
 
-  const animateResult = () => {
-    resultAnimations.setValue(0);
-    Animated.spring(resultAnimations, {
+  const animateCards = async () => {
+    // Resetear animaciones
+    cardDealAnims.forEach(anim => anim.setValue(0));
+    
+    // Animar cartas en secuencia
+    await animateCardDeal(0, 200);  // Player carta 1
+    await animateCardDeal(1, 200);  // Player carta 2
+    await animateCardDeal(2, 200);  // Dealer carta 1
+    await animateCardDeal(3, 200);  // Dealer carta 2
+    await animateCardDeal(4, 200);  // Community 1 (Flop)
+    await animateCardDeal(5, 200);  // Community 2 (Flop)
+    await animateCardDeal(6, 200);  // Community 3 (Flop)
+  };
+
+  const animateMessage = () => {
+    messageAnim.setValue(0);
+    Animated.spring(messageAnim, {
       toValue: 1,
       friction: 8,
       tension: 40,
@@ -351,12 +640,12 @@ export default function Poker({ navigation }) {
     Animated.sequence([
       Animated.timing(pulseAnim, {
         toValue: 1.1,
-        duration: 150,
+        duration: 200,
         useNativeDriver: true,
       }),
       Animated.timing(pulseAnim, {
         toValue: 1,
-        duration: 150,
+        duration: 200,
         useNativeDriver: true,
       }),
     ]).start();
@@ -364,12 +653,27 @@ export default function Poker({ navigation }) {
 
   const triggerWinAnimation = () => {
     setShowWinAnimation(true);
-    setTimeout(() => setShowWinAnimation(false), 2000);
+    setTimeout(() => setShowWinAnimation(false), 2500);
   };
 
   const triggerLoseAnimation = () => {
     setShowLoseAnimation(true);
-    setTimeout(() => setShowLoseAnimation(false), 2000);
+    setTimeout(() => setShowLoseAnimation(false), 2500);
+  };
+
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
+  const handleHideLuckBoost = () => {
+    setShowLuckBoost(false);
+  };
+
+  // Verificar y mostrar boost de suerte basado en racha de VICTORIAS
+  const checkAndShowLuckBoost = () => {
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+    }
   };
 
   const evaluateHand = (cards) => {
@@ -409,77 +713,90 @@ export default function Poker({ navigation }) {
     const isFlush = suits.every((suit) => suit === suits[0]);
 
     if (isStraight && isFlush && values.includes(14) && values.includes(13))
-      return { rank: 9, name: "Escalera Real" };
-    if (isStraight && isFlush) return { rank: 8, name: "Escalera de Color" };
-    if (counts.includes(4)) return { rank: 7, name: "Póquer" };
+      return { rank: 9, name: "ESCALERA REAL" };
+    if (isStraight && isFlush) return { rank: 8, name: "ESCALERA DE COLOR" };
+    if (counts.includes(4)) return { rank: 7, name: "PÓQUER" };
     if (counts.includes(3) && counts.includes(2))
-      return { rank: 6, name: "Full House" };
-    if (isFlush) return { rank: 5, name: "Color" };
-    if (isStraight) return { rank: 4, name: "Escalera" };
-    if (counts.includes(3)) return { rank: 3, name: "Trío" };
+      return { rank: 6, name: "FULL HOUSE" };
+    if (isFlush) return { rank: 5, name: "COLOR" };
+    if (isStraight) return { rank: 4, name: "ESCALERA" };
+    if (counts.includes(3)) return { rank: 3, name: "TRÍO" };
     if (counts.filter((count) => count === 2).length === 2)
-      return { rank: 2, name: "Doble Pareja" };
-    if (counts.includes(2)) return { rank: 1, name: "Pareja" };
-    return { rank: 0, name: "Carta Alta" };
+      return { rank: 2, name: "DOBLE PAREJA" };
+    if (counts.includes(2)) return { rank: 1, name: "PAREJA" };
+    return { rank: 0, name: "CARTA ALTA" };
   };
 
   const startGame = async () => {
     if (!canAfford(bet)) {
-      await playSound("error");
       Alert.alert("Fondos Insuficientes", "No tienes suficientes Maneki Coins");
       return;
     }
 
+    // Marcar que el juego está en progreso
+    setGameInProgress(true);
+
+    // Mostrar boost de suerte si hay racha de victorias
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
     subtractCoins(bet, `Apuesta en Poker Texas Hold'em`);
-    await playSound("coin");
     pulseAnimation();
-    animateCards();
 
     setGameState("dealing");
     setResult("");
     setRound(1);
     setTicketsWon(0);
+    setMessage("REPARTIENDO CARTAS...");
+    animateMessage();
 
-    setTimeout(async () => {
-      const newPlayerCards = [dealCard(), dealCard()];
-      const newDealerCards = [dealCard(), dealCard()];
-      const newCommunityCards = [dealCard(), dealCard(), dealCard()];
+    // Animar cartas
+    await animateCards();
 
-      setPlayerCards(newPlayerCards);
-      setDealerCards(newDealerCards);
-      setCommunityCards(newCommunityCards);
+    // Repartir cartas iniciales
+    const newPlayerCards = [dealCard(), dealCard()];
+    const newDealerCards = [dealCard(), dealCard()];
+    const newCommunityCards = [dealCard(), dealCard(), dealCard()];
 
-      await playSound("card");
-      setTimeout(async () => await playSound("card"), 100);
-      setTimeout(async () => await playSound("card"), 200);
-      setTimeout(async () => await playSound("card"), 300);
-      setTimeout(async () => await playSound("card"), 400);
-      setTimeout(async () => await playSound("card"), 500);
+    setPlayerCards(newPlayerCards);
+    setDealerCards(newDealerCards);
+    setCommunityCards(newCommunityCards);
 
-      setGameState("flop");
-    }, 300);
+    setMessage("FLOP - REVELA LA SIGUIENTE CARTA");
+    setGameState("flop");
+    animateMessage();
   };
 
   const continueGame = async () => {
     if (round === 1) {
-      await playSound("click");
+      // Animar nueva carta del Turn
+      await animateCardDeal(7, 200);
+      
       const newCard = dealCard();
       setCommunityCards((prev) => [...prev, newCard]);
-      await playSound("card");
       setRound(2);
+      setMessage("TURN - REVELA LA ÚLTIMA CARTA");
       setGameState("turn");
+      animateMessage();
     } else if (round === 2) {
-      await playSound("click");
+      // Animar nueva carta del River
+      await animateCardDeal(8, 200);
+      
       const newCard = dealCard();
       setCommunityCards((prev) => [...prev, newCard]);
-      await playSound("card");
       setRound(3);
+      setMessage("RIVER - CALCULANDO RESULTADO...");
       setGameState("river");
-      setTimeout(() => determineWinner(), 800);
+      animateMessage();
+      
+      setTimeout(() => determineWinner(), 1500);
     }
   };
 
   const determineWinner = async () => {
+    const autoWin = shouldAutoWin();
     const allPlayerCards = [...playerCards, ...communityCards];
     const allDealerCards = [...dealerCards, ...communityCards];
 
@@ -489,22 +806,28 @@ export default function Poker({ navigation }) {
     let winner = "";
     let ticketReward = 0;
 
-    if (playerHand.rank > dealerHand.rank) {
+    if (autoWin || playerHand.rank > dealerHand.rank) {
       winner = "player";
       ticketReward = getTicketRewards(bet, playerHand.rank);
-      setResult(`¡GANASTE! - ${playerHand.name}`);
-      await playSound("win");
+      if (autoWin) {
+        setResult(`¡GANANCIA SORPRESA! - ${playerHand.name}`);
+      } else {
+        setResult(`¡GANASTE! - ${playerHand.name}`);
+      }
       triggerWinAnimation();
+      // AUMENTAR racha de victorias
+      setWinStreak(prev => prev + 1);
     } else if (dealerHand.rank > playerHand.rank) {
       winner = "dealer";
-      setResult(` MANEKI gana - ${dealerHand.name}`);
-      await playSound("lose");
+      setResult(`MANEKI GANA - ${dealerHand.name}`);
       triggerLoseAnimation();
+      // RESET racha de victorias al perder
+      setWinStreak(0);
     } else {
       winner = "tie";
-      ticketReward = getTicketRewards(bet, playerHand.rank) / 2; // Mitad de tickets en empate
-      setResult(` EMPATE - ${playerHand.name}`);
-      await playSound("click");
+      ticketReward = getTicketRewards(bet, playerHand.rank) / 2;
+      setResult(`EMPATE - ${playerHand.name}`);
+      // En empate, mantener la racha actual
     }
 
     // SOLO GANAS TICKETS, NO MANEKI COINS
@@ -513,10 +836,18 @@ export default function Poker({ navigation }) {
       setTicketsWon(ticketReward);
     }
 
-    setWinAmount(0); // Ya no hay ganancia de Maneki Coins
     setGameState("result");
-    animateResult();
+    setGameInProgress(false); // Terminar el estado de juego en progreso
+    setMessage("RONDA TERMINADA");
+    animateMessage();
     pulseAnimation();
+
+    // Verificar si debemos mostrar el boost de suerte después de una VICTORIA
+    if (winner === "player") {
+      setTimeout(() => {
+        checkAndShowLuckBoost();
+      }, 1500);
+    }
   };
 
   const resetGame = async () => {
@@ -526,55 +857,38 @@ export default function Poker({ navigation }) {
     setCommunityCards([]);
     setDealerCards([]);
     setResult("");
-    setWinAmount(0);
     setRound(0);
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
     setTicketsWon(0);
-    await playSound("click");
+    setGameInProgress(false); // Asegurar que se reinicie el estado
+    setMessage("SELECCIONE SU APUESTA");
+    // NO resetear la racha de victorias aquí
+    cardDealAnims.forEach(anim => anim.setValue(0));
+    animateMessage();
   };
 
-  const renderCard = (card, index, isHidden = false) => {
-    const cardAnimation = {
-      transform: [
-        {
-          translateY: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [-20, 0],
-          }),
-        },
-        {
-          scale: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.8, 1],
-          }),
-        },
-      ],
-      opacity: cardAnimations,
-    };
-
-    const getCardColor = (suit) =>
-      suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
-
-    if (isHidden) {
-      return (
-        <Animated.View key={index} style={[styles.card, cardAnimation]}>
-          <View style={styles.hiddenCard}>
-            <View style={styles.cardPattern} />
-          </View>
-        </Animated.View>
-      );
+  const renderCard = (card, index, type, hide = false) => {
+    let animIndex;
+    if (type === 'player') {
+      animIndex = index; // 0, 1
+    } else if (type === 'dealer') {
+      animIndex = index + 2; // 2, 3
+    } else if (type === 'community') {
+      animIndex = index + 4; // 4, 5, 6, 7, 8
     }
+    
+    const cardAnim = cardDealAnims[animIndex] || new Animated.Value(0);
 
     return (
-      <Animated.View key={index} style={[styles.card, cardAnimation]}>
-        <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
-          {card.value}
-        </Text>
-        <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
-          {card.suit}
-        </Text>
-      </Animated.View>
+      <Card
+        key={index}
+        card={card}
+        index={index}
+        hide={hide}
+        type={type}
+        cardAnim={cardAnim}
+      />
     );
   };
 
@@ -584,53 +898,80 @@ export default function Poker({ navigation }) {
     <SafeAreaView style={styles.safeArea}>
       <WinAnimation show={showWinAnimation} />
       <LoseAnimation show={showLoseAnimation} />
+      
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header ultra compacto */}
+      <LuckBoostImage 
+        show={showLuckBoost} 
+        winStreak={winStreak}
+        onHide={handleHideLuckBoost}
+      />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker 
+        isVisible={showTabBlocker} 
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Header Compacto */}
         <View style={styles.header}>
           <View style={styles.balances}>
             <View style={styles.balanceItem}>
-              <Image
-                source={require("../../assets/dinero.png")}
-                style={styles.balanceIcon}
-              />
-              <Text style={styles.balanceText}>
-                {manekiCoins.toLocaleString()}
-              </Text>
+              <Image source={require("../../assets/dinero.png")} style={styles.balanceIcon} />
+              <Text style={styles.balanceText}>{manekiCoins.toLocaleString()}</Text>
             </View>
             <View style={styles.balanceItem}>
-              <Image
-                source={require("../../assets/TICKET.png")}
-                style={styles.balanceIcon}
-              />
+              <Image source={require("../../assets/TICKET.png")} style={styles.balanceIcon} />
               <Text style={styles.balanceText}>{tickets.toLocaleString()}</Text>
             </View>
-          </View>
-
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}>POKER</Text>
+            {/* Indicador de RACHA DE VICTORIAS */}
+            {winStreak > 0 && (
+              <View style={styles.streakIndicator}>
+                <Ionicons name="trophy" size={14} color="#FFD700" />
+                <Text style={styles.streakText}>Racha: {winStreak}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.emptySpace} />
         </View>
+
+        {/* Mensaje del juego */}
+        <Animated.View style={[styles.messageContainer, { transform: [{ scale: messageAnim }] }]}>
+          <Text style={styles.message}>{message}</Text>
+          {ticketsWon > 0 && (
+            <View style={styles.ticketsWonContainer}>
+              <Text style={styles.ticketsWonText}>+{ticketsWon} TICKETS</Text>
+            </View>
+          )}
+        </Animated.View>
 
         {/* Área de Maneki */}
         {gameState !== "betting" && (
           <View style={styles.area}>
             <View style={styles.areaHeader}>
               <Text style={styles.areaTitle}>MANEKI</Text>
-              <Text style={styles.areaScore}>
-                {gameState === "result" ? "REVELADO" : "OCULTO"}
-              </Text>
+              <View style={styles.scoreContainer}>
+                <Text style={styles.areaScore}>
+                  {gameState === "result" ? "REVELADO" : "OCULTO"}
+                </Text>
+              </View>
             </View>
             <View style={styles.cardsContainer}>
-              {dealerCards.map((card, index) =>
-                renderCard(card, index, gameState !== "result")
-              )}
+              {dealerCards.map((card, index) => (
+                renderCard(card, index, 'dealer', gameState !== "result")
+              ))}
             </View>
           </View>
         )}
@@ -640,51 +981,18 @@ export default function Poker({ navigation }) {
           <View style={styles.area}>
             <View style={styles.areaHeader}>
               <Text style={styles.areaTitle}>CARTAS COMUNITARIAS</Text>
-              <Text style={styles.areaScore}>
-                {round === 1 ? "FLOP" : round === 2 ? "TURN" : "RIVER"}
-              </Text>
+              <View style={styles.scoreContainer}>
+                <Text style={styles.areaScore}>
+                  {round === 1 ? "FLOP" : round === 2 ? "TURN" : "RIVER"}
+                </Text>
+              </View>
             </View>
             <View style={styles.cardsContainer}>
-              {communityCards.map((card, index) => renderCard(card, index))}
+              {communityCards.map((card, index) => (
+                renderCard(card, index, 'community')
+              ))}
             </View>
           </View>
-        )}
-
-        {/* Mensaje del juego */}
-        {(result || ticketsWon > 0) && (
-          <Animated.View
-            style={[
-              styles.messageContainer,
-              {
-                transform: [
-                  {
-                    scale: resultAnimations.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.9, 1],
-                    }),
-                  },
-                  { scale: pulseAnim },
-                ],
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.message,
-                ticketsWon > 0 ? styles.winMessage : styles.loseMessage,
-              ]}
-            >
-              {result}
-            </Text>
-            {ticketsWon > 0 && gameState === "result" && (
-              <Text style={styles.ticketsWonText}>+{ticketsWon} Tickets</Text>
-            )}
-            {bet > 0 && !ticketsWon && (
-              <Text style={styles.betLost}>
-                Pierdes: {bet.toLocaleString()} MC
-              </Text>
-            )}
-          </Animated.View>
         )}
 
         {/* Cartas del Jugador */}
@@ -692,10 +1000,14 @@ export default function Poker({ navigation }) {
           <View style={styles.area}>
             <View style={styles.areaHeader}>
               <Text style={styles.areaTitle}>TUS CARTAS</Text>
-              <Text style={styles.areaScore}>JUGADOR</Text>
+              <View style={styles.scoreContainer}>
+                <Text style={styles.areaScore}>JUGADOR</Text>
+              </View>
             </View>
             <View style={styles.cardsContainer}>
-              {playerCards.map((card, index) => renderCard(card, index))}
+              {playerCards.map((card, index) => (
+                renderCard(card, index, 'player')
+              ))}
             </View>
           </View>
         )}
@@ -715,64 +1027,61 @@ export default function Poker({ navigation }) {
                       !canAfford(amount) && styles.disabledButton,
                       bet === amount && styles.selectedBet,
                     ]}
-                    onPress={async () => {
+                    onPress={() => {
                       if (canAfford(amount)) {
                         setBet(amount);
-                        await playSound("click");
                         pulseAnimation();
-                      } else await playSound("error");
+                      }
                     }}
                     disabled={!canAfford(amount)}
                   >
-                    <Text style={styles.betAmountText}>
-                      {amount.toLocaleString()}
-                    </Text>
+                    <Text style={styles.betAmountText}>{amount.toLocaleString()}</Text>
                     <Text style={styles.ticketRewardText}>
-                      +{getTicketRewards(amount, 1)} Tickets
+                      +{getTicketRewards(amount, 1)} TICKETS
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.currentBet}>
-                {bet > 0
-                  ? `Apuesta: ${bet.toLocaleString()} MC`
-                  : "Seleccione un monto"}
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.startButton, bet === 0 && styles.disabledButton]}
-                onPress={startGame}
-                disabled={bet === 0}
-              >
-                <Ionicons name="play" size={16} color="#FFF" />
-                <Text style={styles.startButtonText}>INICIAR JUEGO</Text>
-              </TouchableOpacity>
+              <View style={styles.betActions}>
+                <Text style={styles.currentBet}>
+                  {bet > 0 ? `APUESTA: ${bet.toLocaleString()} MC` : "SELECCIONE MONTO"}
+                </Text>
+                
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.startButton, bet === 0 && styles.disabledButton]}
+                  onPress={startGame}
+                  disabled={bet === 0}
+                >
+                  <Ionicons name="play" size={16} color="#FFF" />
+                  <Text style={styles.actionButtonText}>INICIAR JUEGO</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
           {(gameState === "flop" || gameState === "turn") && (
-            <TouchableOpacity
-              style={styles.continueButton}
-              onPress={continueGame}
-            >
-              <Ionicons name="arrow-forward" size={16} color="#FFF" />
-              <Text style={styles.continueButtonText}>
-                {round === 1 ? "REVELAR TURN" : "REVELAR RIVER"}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.gameActions}>
+              <TouchableOpacity style={[styles.actionButton, styles.continueButton]} onPress={continueGame}>
+                <Ionicons name="arrow-forward" size={16} color="#FFF" />
+                <Text style={styles.actionButtonText}>
+                  {round === 1 ? "REVELAR TURN" : "REVELAR RIVER"}
+                </Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {gameState === "result" && (
-            <TouchableOpacity
-              style={styles.playAgainButton}
-              onPress={resetGame}
-            >
-              <Ionicons name="refresh" size={16} color="#FFF" />
-              <Text style={styles.playAgainText}>JUGAR DE NUEVO</Text>
-            </TouchableOpacity>
+            <View style={styles.endActions}>
+              <TouchableOpacity style={[styles.actionButton, styles.playAgainButton]} onPress={resetGame}>
+                <Ionicons name="refresh" size={16} color="#FFF" />
+                <Text style={styles.actionButtonText}>JUGAR DE NUEVO</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
+
+        <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -797,51 +1106,59 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
+    paddingHorizontal: 4,
   },
   balances: {
     flexDirection: "row",
     gap: 8,
+    alignItems: "center",
   },
   balanceItem: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#1A1A1A",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#333",
-    gap: 4,
+    gap: 6,
+    minWidth: 80,
   },
   balanceIcon: {
-    width: 12,
-    height: 12,
+    width: 18,
+    height: 18,
     resizeMode: "contain",
   },
   balanceText: {
     color: "#FFD700",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
+  streakIndicator: {
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.6)", // Verde para victorias
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    gap: 4,
   },
-  title: {
+  streakText: {
     color: "#FFD700",
-    fontSize: 16,
+    fontSize: 11,
     fontWeight: "bold",
   },
   emptySpace: {
     width: 70,
   },
   area: {
-    backgroundColor: "rgba(26, 26, 26, 0.9)",
+    backgroundColor: "rgba(26, 26, 26, 0.95)",
     borderRadius: 10,
     padding: 10,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: "#333",
   },
@@ -853,33 +1170,34 @@ const styles = StyleSheet.create({
   },
   areaTitle: {
     color: "#FFF",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "bold",
   },
-  areaScore: {
-    color: "#FFD700",
-    fontSize: 11,
-    fontWeight: "bold",
-    backgroundColor: "rgba(139, 0, 0, 0.3)",
-    paddingHorizontal: 8,
+  scoreContainer: {
+    backgroundColor: "rgba(139, 0, 0, 0.4)",
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#FFD700",
   },
+  areaScore: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
   cardsContainer: {
     flexDirection: "row",
     justifyContent: "center",
     flexWrap: "wrap",
+    minHeight: 80,
+    gap: 6,
   },
   card: {
-    width: 45,
-    height: 65,
+    width: 56,
+    height: 78,
     backgroundColor: "#FFFFFF",
-    borderRadius: 5,
-    margin: 3,
-    justifyContent: "center",
-    alignItems: "center",
+    borderRadius: 6,
     elevation: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -887,85 +1205,112 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     borderWidth: 1,
     borderColor: "#E5E5E5",
+    overflow: 'hidden',
+  },
+  cardContent: {
+    width: "100%",
+    height: "100%",
+    padding: 4,
+  },
+  cardCornerTop: {
+    position: "absolute",
+    top: 4,
+    left: 4,
+    alignItems: "flex-start",
+  },
+  cardCornerBottom: {
+    position: "absolute",
+    bottom: 4,
+    right: 4,
+    alignItems: "flex-start",
+    transform: [{ rotate: "180deg" }],
   },
   cardValue: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "bold",
-    marginBottom: 2,
+    lineHeight: 12,
   },
-  cardSuit: {
-    fontSize: 16,
+  cardSuitSmall: {
+    fontSize: 10,
+    lineHeight: 10,
+  },
+  cardCenter: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: [{ translateX: -10 }, { translateY: -10 }],
+  },
+  cardSuitLarge: {
+    fontSize: 18,
   },
   hiddenCard: {
+    backgroundColor: "#8B0000",
+  },
+  cardBackPattern: {
     width: "100%",
     height: "100%",
     backgroundColor: "#8B0000",
-    borderRadius: 5,
     justifyContent: "center",
     alignItems: "center",
   },
-  cardPattern: {
-    width: "70%",
-    height: "70%",
+  cardBackLogo: {
+    width: 24,
+    height: 24,
     backgroundColor: "#A52A2A",
-    borderRadius: 3,
+    borderRadius: 4,
+    justifyContent: "center",
+    alignItems: "center",
     opacity: 0.6,
   },
   messageContainer: {
     alignItems: "center",
-    marginVertical: 8,
+    marginVertical: 10,
     padding: 10,
-    backgroundColor: "rgba(26, 26, 26, 0.9)",
+    backgroundColor: "rgba(26, 26, 26, 0.95)",
     borderRadius: 8,
     borderWidth: 2,
+    borderColor: "#FFD700",
     minHeight: 50,
     justifyContent: "center",
   },
   message: {
-    fontSize: 12,
+    color: "#FFD700",
+    fontSize: 13,
     fontWeight: "bold",
     textAlign: "center",
   },
-  winMessage: {
-    color: "#10B981",
+  ticketsWonContainer: {
+    marginTop: 4,
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
     borderColor: "#10B981",
-  },
-  loseMessage: {
-    color: "#EF4444",
-    borderColor: "#EF4444",
   },
   ticketsWonText: {
     color: "#10B981",
     fontSize: 11,
     fontWeight: "bold",
-    marginTop: 3,
-  },
-  betLost: {
-    color: "#FFF",
-    fontSize: 11,
-    fontWeight: "bold",
-    marginTop: 3,
-    opacity: 0.8,
   },
   controls: {
-    marginTop: 5,
-    marginBottom: 10,
+    marginTop: 8,
   },
   betContainer: {
     alignItems: "center",
   },
   betTitle: {
     color: "#FFF",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "bold",
-    marginBottom: 10,
+    marginBottom: 12,
     textAlign: "center",
   },
   betAmounts: {
     flexDirection: "row",
     justifyContent: "center",
     flexWrap: "wrap",
-    marginBottom: 10,
+    marginBottom: 12,
     gap: 6,
   },
   betAmountButton: {
@@ -976,11 +1321,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#444",
-    minWidth: 70,
+    minWidth: 65,
   },
   selectedBet: {
     borderColor: "#FFD700",
-    backgroundColor: "rgba(255, 215, 0, 0.1)",
+    backgroundColor: "rgba(255, 215, 0, 0.15)",
   },
   betAmountText: {
     color: "#FFD700",
@@ -991,69 +1336,60 @@ const styles = StyleSheet.create({
     color: "#10B981",
     fontSize: 9,
     marginTop: 2,
+    fontWeight: "600",
+  },
+  betActions: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
   },
   currentBet: {
     color: "#FFD700",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "bold",
-    marginBottom: 10,
     textAlign: "center",
-    backgroundColor: "rgba(139, 0, 0, 0.3)",
+    backgroundColor: "rgba(139, 0, 0, 0.4)",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#FFD700",
   },
-  startButton: {
+  gameActions: {
+    alignItems: "center",
+  },
+  endActions: {
+    alignItems: "center",
+  },
+  actionButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#10B981",
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 15,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: "#059669",
     gap: 6,
+    justifyContent: "center",
   },
-  startButtonText: {
-    color: "#FFF",
-    fontWeight: "bold",
-    fontSize: 12,
+  startButton: {
+    backgroundColor: "#10B981",
+    borderColor: "#059669",
   },
   continueButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "#2563EB",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 15,
-    borderWidth: 2,
     borderColor: "#1D4ED8",
-    gap: 6,
-  },
-  continueButtonText: {
-    color: "#FFF",
-    fontWeight: "bold",
-    fontSize: 11,
   },
   playAgainButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "#10B981",
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 15,
-    borderWidth: 2,
     borderColor: "#059669",
-    gap: 6,
   },
-  playAgainText: {
+  actionButtonText: {
     color: "#FFF",
     fontWeight: "bold",
     fontSize: 12,
+  },
+  bottomSpacer: {
+    height: 10,
   },
   disabledButton: {
     backgroundColor: "#1A1A1A",
@@ -1069,9 +1405,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    padding: 20,
-    borderRadius: 15,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    padding: 16,
+    borderRadius: 12,
     borderWidth: 3,
     width: 160,
     height: 120,
@@ -1084,16 +1420,101 @@ const styles = StyleSheet.create({
   },
   winText: {
     color: "#FFD700",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "bold",
-    marginTop: 8,
+    marginTop: 6,
     textAlign: "center",
   },
   loseText: {
     color: "#EF4444",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "bold",
-    marginTop: 8,
+    marginTop: 6,
     textAlign: "center",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,  // 80% del ancho de la pantalla
+    height: height * 0.6, // 60% del alto de la pantalla
+    maxWidth: 400,       // Máximo ancho
+    maxHeight: 400,      // Máximo alto
+  },
+  // Estilos para el sistema de suerte aumentada (solo imagen)
+  luckBoostImageContainer: {
+    position: "absolute",
+    top: "30%",
+    left: "10%",
+    right: "10%",
+    zIndex: 1001,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  luckBoostImageLarge: {
+    width: width * 0.7,  // 70% del ancho de la pantalla
+    height: height * 0.5, // 50% del alto de la pantalla
+    maxWidth: 350,       // Máximo ancho
+    maxHeight: 300,      // Máximo alto
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: '#1a1a1a',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFD700',
+    maxWidth: '80%',
+  },
+  tabBlockerText: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: 'normal',
+    color: '#FFF',
   },
 });

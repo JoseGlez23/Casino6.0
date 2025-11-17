@@ -1,147 +1,168 @@
 // src/games/dice/DiceRoll.js
-import React, { useState, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  StyleSheet, 
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
   Animated,
   Easing,
   Dimensions,
   ScrollView,
   SafeAreaView,
-  Vibration,
   Alert,
-  Image
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useCoins } from '../../context/CoinsContext';
-import { Audio } from 'expo-av';
+  Image,
+  Modal,
+  BackHandler,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useCoins } from "../../context/CoinsContext";
 
-const { width, height } = Dimensions.get('window');
+const { width, height } = Dimensions.get("window");
+
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
+
+  return (
+    <TouchableOpacity
+      style={styles.tabBlocker}
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>Termina el juego primero</Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        handleClose();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  const handleClose = () => {
+    // Animación de salida
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onClose();
+    });
+  };
+
+  const handleModalPress = () => {
+    handleClose();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlayTransparent}
+        activeOpacity={1}
+        onPress={handleModalPress}
+      >
+        <Animated.View
+          ref={modalRef}
+          style={[
+            styles.blockModalContainerTransparent,
+            {
+              transform: [{ scale: scaleAnim }, { translateY: slideAnim }],
+              opacity: fadeAnim,
+            },
+          ]}
+        >
+          <Image
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 // Tabla de premios de tickets para Dice Roll
 const getTicketRewards = (betAmount, prediction) => {
   const multipliers = {
-    'low': 2,
-    'high': 2,
-    'seven': 4
+    low: 2,
+    high: 2,
+    seven: 4,
   };
-  
+
   const baseTickets = betAmount * 0.5; // 0.5 tickets por cada coin apostado
   const multiplier = multipliers[prediction] || 1;
-  
+
   return Math.floor(baseTickets * multiplier);
-};
-
-// Hook de sonidos para DiceRoll
-const useGameSounds = () => {
-  const [sounds, setSounds] = useState({});
-
-  const loadSounds = async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-
-      const soundObjects = {};
-
-      const soundTypes = [
-        { key: 'card', file: require('../../assets/sounds/card.mp3') },
-        { key: 'click', file: require('../../assets/sounds/click.mp3') },
-        { key: 'coin', file: require('../../assets/sounds/coin.mp3') },
-        { key: 'error', file: require('../../assets/sounds/error.mp3') },
-        { key: 'success', file: require('../../assets/sounds/success.mp3') }
-      ];
-
-      for (const { key, file } of soundTypes) {
-        try {
-          const soundObject = new Audio.Sound();
-          await soundObject.loadAsync(file);
-          soundObjects[key] = soundObject;
-        } catch (error) {
-          console.log(`❌ Error cargando sonido ${key}:`, error);
-        }
-      }
-
-      setSounds(soundObjects);
-      
-    } catch (error) {
-      console.log('❌ Error inicializando sistema de sonido:', error);
-    }
-  };
-
-  const playSound = async (type) => {
-    try {
-      let soundKey;
-      switch(type) {
-        case 'win':
-          soundKey = 'success';
-          break;
-        case 'lose':
-          soundKey = 'error';
-          break;
-        case 'dice':
-          soundKey = 'card';
-          break;
-        case 'chip':
-        case 'coin':
-          soundKey = 'coin';
-          break;
-        case 'click':
-        default:
-          soundKey = 'click';
-      }
-      
-      if (sounds[soundKey]) {
-        await sounds[soundKey].replayAsync();
-      } else {
-        playVibration(type);
-      }
-      
-    } catch (error) {
-      playVibration(type);
-    }
-  };
-
-  const playVibration = (type) => {
-    switch(type) {
-      case 'win':
-        Vibration.vibrate([0, 100, 50, 100, 50, 100]);
-        break;
-      case 'lose':
-        Vibration.vibrate([0, 300, 100, 300]);
-        break;
-      case 'dice':
-        Vibration.vibrate([0, 50, 25, 50]);
-        break;
-      case 'chip':
-      case 'coin':
-        Vibration.vibrate(20);
-        break;
-      case 'click':
-      default:
-        Vibration.vibrate(15);
-    }
-  };
-
-  useEffect(() => {
-    loadSounds();
-    
-    return () => {
-      Object.values(sounds).forEach(sound => {
-        if (sound) {
-          sound.unloadAsync();
-        }
-      });
-    };
-  }, []);
-
-  return playSound;
 };
 
 // Componente de animación de victoria
@@ -181,16 +202,13 @@ const WinAnimation = ({ show, ticketsWon = 0 }) => {
   if (!show) return null;
 
   return (
-    <Animated.View 
+    <Animated.View
       style={[
         styles.animationContainer,
         styles.winAnimation,
         {
-          transform: [
-            { scale: scaleAnim },
-            { scale: pulseAnim }
-          ]
-        }
+          transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
+        },
       ]}
     >
       <Ionicons name="trophy" size={50} color="#FFD700" />
@@ -221,7 +239,7 @@ const LoseAnimation = ({ show }) => {
           toValue: 1,
           duration: 500,
           useNativeDriver: true,
-        })
+        }),
       ]).start();
     } else {
       scaleAnim.setValue(0);
@@ -231,22 +249,19 @@ const LoseAnimation = ({ show }) => {
 
   const shakeInterpolation = shakeAnim.interpolate({
     inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0]
+    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
   });
 
   if (!show) return null;
 
   return (
-    <Animated.View 
+    <Animated.View
       style={[
         styles.animationContainer,
         styles.loseAnimation,
         {
-          transform: [
-            { scale: scaleAnim },
-            { translateX: shakeInterpolation }
-          ]
-        }
+          transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
+        },
       ]}
     >
       <Ionicons name="sad-outline" size={50} color="#EF4444" />
@@ -257,35 +272,97 @@ const LoseAnimation = ({ show }) => {
 };
 
 export default function DiceRoll({ navigation }) {
-  const { manekiCoins, tickets, subtractCoins, addTickets, canAfford } = useCoins();
-  const playSound = useGameSounds();
-  
+  const { manekiCoins, tickets, subtractCoins, addTickets, canAfford } =
+    useCoins();
+
   const [bet, setBet] = useState(0);
   const [dice, setDice] = useState([1, 1]);
-  const [gameState, setGameState] = useState('betting');
-  const [result, setResult] = useState('');
+  const [gameState, setGameState] = useState("betting");
+  const [result, setResult] = useState("");
   const [ticketsWon, setTicketsWon] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
-  
+
+  // NUEVOS ESTADOS PARA BLOQUEO
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
+
   const diceAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
 
-  useEffect(() => {
-    const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    };
-    initializeAudio();
-  }, []);
+  // Referencias para manejo de navegación
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
 
-  const diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress
+        ? { display: "none" }
+        : {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          },
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation
+        .getParent()
+        ?.addListener("tabPress", (e) => {
+          e.preventDefault();
+          setShowTabBlocker(true);
+          setTimeout(() => setShowTabBlocker(false), 2000);
+        });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          },
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (gameState === "rolling" || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener("beforeRemove", (e) => {
+      if (gameState === "rolling" || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, gameState, gameInProgress]);
+
+  const diceFaces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
   const diceValues = [1, 2, 3, 4, 5, 6];
 
   const animateDice = () => {
@@ -337,26 +414,33 @@ export default function DiceRoll({ navigation }) {
     setTimeout(() => setShowLoseAnimation(false), 2000);
   };
 
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
   const placeBet = async (amount, prediction) => {
     if (!canAfford(amount)) {
-      await playSound('error');
-      Alert.alert('Fondos Insuficientes', 'No tienes suficientes Maneki Coins para esta apuesta');
+      Alert.alert(
+        "Fondos Insuficientes",
+        "No tienes suficientes Maneki Coins para esta apuesta"
+      );
       return;
     }
 
     setBet(amount);
     subtractCoins(amount, `Apuesta en Dice Roll`);
-    await playSound('coin');
     pulseAnimation();
 
-    setGameState('rolling');
-    setResult('');
+    setGameState("rolling");
+    setResult("");
     setTicketsWon(0);
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
 
+    // ACTIVAR BLOQUEO DE JUEGO
+    setGameInProgress(true);
+
     // Animación de dados rodando
-    await playSound('dice');
     animateDice();
 
     let rollCount = 0;
@@ -364,18 +448,18 @@ export default function DiceRoll({ navigation }) {
     const rollInterval = setInterval(() => {
       const tempRoll1 = diceValues[Math.floor(Math.random() * 6)];
       const tempRoll2 = diceValues[Math.floor(Math.random() * 6)];
-      
+
       setDice([tempRoll1, tempRoll2]);
-      
+
       rollCount++;
       if (rollCount >= maxRolls) {
         clearInterval(rollInterval);
-        
+
         setTimeout(() => {
           const finalRoll1 = diceValues[Math.floor(Math.random() * 6)];
           const finalRoll2 = diceValues[Math.floor(Math.random() * 6)];
           const total = finalRoll1 + finalRoll2;
-          
+
           setDice([finalRoll1, finalRoll2]);
           determineResult(total, prediction, amount);
         }, 150);
@@ -385,50 +469,52 @@ export default function DiceRoll({ navigation }) {
 
   const determineResult = async (total, prediction, betAmount) => {
     let ticketsReward = 0;
-    let resultMessage = '';
+    let resultMessage = "";
 
-    if (prediction === 'high' && total > 7) {
-      ticketsReward = getTicketRewards(betAmount, 'high');
+    if (prediction === "high" && total > 7) {
+      ticketsReward = getTicketRewards(betAmount, "high");
       resultMessage = `ALTO - ${total} > 7`;
-      await playSound('win');
       triggerWinAnimation(ticketsReward);
-    } else if (prediction === 'low' && total < 7) {
-      ticketsReward = getTicketRewards(betAmount, 'low');
+    } else if (prediction === "low" && total < 7) {
+      ticketsReward = getTicketRewards(betAmount, "low");
       resultMessage = `BAJO - ${total} < 7`;
-      await playSound('win');
       triggerWinAnimation(ticketsReward);
-    } else if (prediction === 'seven' && total === 7) {
-      ticketsReward = getTicketRewards(betAmount, 'seven');
+    } else if (prediction === "seven" && total === 7) {
+      ticketsReward = getTicketRewards(betAmount, "seven");
       resultMessage = `SIETE - ${total} = 7`;
-      await playSound('win');
       triggerWinAnimation(ticketsReward);
     } else {
       resultMessage = `TOTAL ${total} - SIN PREMIO`;
-      await playSound('lose');
       triggerLoseAnimation();
     }
 
     // Procesar SOLO tickets si hay ganancia
     // NO agregar coins adicionales
     if (ticketsReward > 0) {
-      await addTickets(ticketsReward, `Ganancia en Dice Roll - ${resultMessage.split(' - ')[0]}`);
+      await addTickets(
+        ticketsReward,
+        `Ganancia en Dice Roll - ${resultMessage.split(" - ")[0]}`
+      );
     }
 
     setTicketsWon(ticketsReward);
     setResult(resultMessage);
-    setGameState('result');
+    setGameState("result");
     animateResult();
     pulseAnimation();
+
+    // DESACTIVAR BLOQUEO CUANDO TERMINA EL JUEGO
+    setGameInProgress(false);
   };
 
   const resetGame = async () => {
     setBet(0);
-    setGameState('betting');
-    setResult('');
+    setGameState("betting");
+    setResult("");
     setTicketsWon(0);
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
-    await playSound('click');
+    setGameInProgress(false);
   };
 
   const renderDice = (diceValue, index) => {
@@ -437,7 +523,7 @@ export default function DiceRoll({ navigation }) {
         {
           rotate: diceAnimations.interpolate({
             inputRange: [0, 1],
-            outputRange: ['0deg', '360deg'],
+            outputRange: ["0deg", "360deg"],
           }),
         },
         {
@@ -464,7 +550,26 @@ export default function DiceRoll({ navigation }) {
       <WinAnimation show={showWinAnimation} ticketsWon={ticketsWon} />
       <LoseAnimation show={showLoseAnimation} />
 
-      <ScrollView 
+      {/* Modal de bloqueo */}
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker
+        isVisible={showTabBlocker}
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
+
+      <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -501,10 +606,6 @@ export default function DiceRoll({ navigation }) {
               </View>
             </View>
           </View>
-          
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}>DICE ROLL</Text>
-          </View>
 
           <View style={styles.emptySpace} />
         </View>
@@ -515,7 +616,7 @@ export default function DiceRoll({ navigation }) {
             {renderDice(dice[0], 1)}
             {renderDice(dice[1], 2)}
           </View>
-          
+
           <View style={styles.diceInfo}>
             <Text style={styles.total}>{dice[0] + dice[1]}</Text>
           </View>
@@ -523,25 +624,35 @@ export default function DiceRoll({ navigation }) {
 
         {/* Mensaje de resultado mini */}
         {result && (
-          <Animated.View style={[
-            styles.messageContainer,
-            {
-              transform: [
+          <Animated.View
+            style={[
+              styles.messageContainer,
+              {
+                transform: [
+                  {
+                    scale: resultAnimations.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.9, 1],
+                    }),
+                  },
+                ],
+                borderColor: result.includes("SIN PREMIO")
+                  ? "#EF4444"
+                  : "#10B981",
+                backgroundColor: result.includes("SIN PREMIO")
+                  ? "rgba(239, 68, 68, 0.1)"
+                  : "rgba(16, 185, 129, 0.1)",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.message,
                 {
-                  scale: resultAnimations.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.9, 1],
-                  })
-                }
-              ],
-              borderColor: result.includes('SIN PREMIO') ? '#EF4444' : '#10B981',
-              backgroundColor: result.includes('SIN PREMIO') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-            }
-          ]}>
-            <Text style={[
-              styles.message,
-              { color: result.includes('SIN PREMIO') ? '#EF4444' : '#10B981' }
-            ]}>
+                  color: result.includes("SIN PREMIO") ? "#EF4444" : "#10B981",
+                },
+              ]}
+            >
               {result}
             </Text>
             {ticketsWon > 0 && (
@@ -559,78 +670,90 @@ export default function DiceRoll({ navigation }) {
 
         {/* Controles ultra compactos */}
         <View style={styles.controls}>
-          {gameState === 'betting' && (
+          {gameState === "betting" && (
             <View style={styles.betContainer}>
               <Text style={styles.betTitle}>APUESTA</Text>
-              
+
               <View style={styles.betAmounts}>
-                {betAmounts.map(amount => (
-                  <TouchableOpacity 
+                {betAmounts.map((amount) => (
+                  <TouchableOpacity
                     key={amount}
                     style={[
                       styles.betAmountButton,
                       !canAfford(amount) && styles.disabledButton,
-                      bet === amount && styles.selectedBet
+                      bet === amount && styles.selectedBet,
                     ]}
-                    onPress={async () => {
+                    onPress={() => {
                       if (canAfford(amount)) {
                         setBet(amount);
-                        await playSound('click');
                       }
                     }}
                     disabled={!canAfford(amount)}
                   >
                     <Text style={styles.betAmountText}>{amount}</Text>
                     <Text style={styles.ticketRewardInfo}>
-                      +{getTicketRewards(amount, 'low')} tickets
+                      +{getTicketRewards(amount, "low")} tickets
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
               <Text style={styles.currentBet}>
-                {bet > 0 ? `${bet} MC` : 'Selecciona'}
+                {bet > 0 ? `${bet} MC` : "Selecciona"}
               </Text>
 
               <View style={styles.predictionContainer}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.predictionButton, styles.lowButton]}
-                  onPress={() => bet > 0 && placeBet(bet, 'low')}
+                  onPress={() => bet > 0 && placeBet(bet, "low")}
                   disabled={bet === 0}
                 >
                   <Text style={styles.predictionButtonText}>BAJO {"<7"}</Text>
-                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'low')} tickets</Text>
+                  <Text style={styles.multiplierText}>
+                    +{getTicketRewards(bet, "low")} tickets
+                  </Text>
                 </TouchableOpacity>
-                
-                <TouchableOpacity 
+
+                <TouchableOpacity
                   style={[styles.predictionButton, styles.sevenButton]}
-                  onPress={() => bet > 0 && placeBet(bet, 'seven')}
+                  onPress={() => bet > 0 && placeBet(bet, "seven")}
                   disabled={bet === 0}
                 >
                   <Text style={styles.predictionButtonText}>SIETE =7</Text>
-                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'seven')} tickets</Text>
+                  <Text style={styles.multiplierText}>
+                    +{getTicketRewards(bet, "seven")} tickets
+                  </Text>
                 </TouchableOpacity>
-                
-                <TouchableOpacity 
+
+                <TouchableOpacity
                   style={[styles.predictionButton, styles.highButton]}
-                  onPress={() => bet > 0 && placeBet(bet, 'high')}
+                  onPress={() => bet > 0 && placeBet(bet, "high")}
                   disabled={bet === 0}
                 >
                   <Text style={styles.predictionButtonText}>ALTO {">7"}</Text>
-                  <Text style={styles.multiplierText}>+{getTicketRewards(bet, 'high')} tickets</Text>
+                  <Text style={styles.multiplierText}>
+                    +{getTicketRewards(bet, "high")} tickets
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
           )}
 
-          {gameState === 'rolling' && (
-            <TouchableOpacity style={styles.rollButton} onPress={() => {}} disabled>
+          {gameState === "rolling" && (
+            <TouchableOpacity
+              style={styles.rollButton}
+              onPress={() => {}}
+              disabled
+            >
               <Text style={styles.rollButtonText}>TIRANDO...</Text>
             </TouchableOpacity>
           )}
 
-          {gameState === 'result' && (
-            <TouchableOpacity style={styles.playAgainButton} onPress={resetGame}>
+          {gameState === "result" && (
+            <TouchableOpacity
+              style={styles.playAgainButton}
+              onPress={resetGame}
+            >
               <Text style={styles.playAgainText}>OTRA VEZ</Text>
             </TouchableOpacity>
           )}
@@ -659,7 +782,7 @@ export default function DiceRoll({ navigation }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: "#0A0A0A",
   },
   scrollView: {
     flex: 1,
@@ -671,9 +794,9 @@ const styles = StyleSheet.create({
     paddingBottom: 15,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 12,
     paddingHorizontal: 5,
   },
@@ -681,137 +804,137 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   balanceRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
   },
   balanceItem: {
-    alignItems: 'flex-start',
+    alignItems: "flex-start",
   },
   coinsDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1A1A1A',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1A1A1A",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#FFD700',
+    borderColor: "#FFD700",
     gap: 5,
     minWidth: 80,
   },
   ticketsDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1A1A1A',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1A1A1A",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#10B981',
+    borderColor: "#10B981",
     gap: 5,
     minWidth: 80,
   },
   coinIcon: {
     width: 14,
     height: 14,
-    resizeMode: 'contain',
+    resizeMode: "contain",
   },
   ticketIcon: {
     width: 14,
     height: 14,
-    resizeMode: 'contain',
+    resizeMode: "contain",
   },
   balanceText: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   titleContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     flex: 1,
     marginTop: 5,
   },
   title: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   emptySpace: {
     width: 30,
   },
   diceArea: {
-    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    backgroundColor: "rgba(26, 26, 26, 0.9)",
     borderRadius: 10,
     padding: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#333',
-    alignItems: 'center',
+    borderColor: "#333",
+    alignItems: "center",
   },
   diceContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
     marginBottom: 8,
   },
   dice: {
     width: 45,
     height: 45,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 8,
     marginHorizontal: 6,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
     borderWidth: 1,
-    borderColor: '#E5E5E5',
+    borderColor: "#E5E5E5",
   },
   diceFace: {
     fontSize: 22,
   },
   diceInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   total: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   messageContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     marginVertical: 10,
     padding: 12,
     borderRadius: 8,
     borderWidth: 2,
     minHeight: 50,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   message: {
     fontSize: 13,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: "bold",
+    textAlign: "center",
     lineHeight: 16,
   },
   ticketsWonContainer: {
     marginTop: 5,
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#10B981',
+    borderColor: "#10B981",
   },
   ticketsWonText: {
-    color: '#10B981',
+    color: "#10B981",
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   betInfo: {
-    color: '#FFF',
+    color: "#FFF",
     fontSize: 11,
     marginTop: 6,
     opacity: 0.8,
@@ -821,167 +944,167 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   betContainer: {
-    alignItems: 'center',
+    alignItems: "center",
   },
   betTitle: {
-    color: '#FFF',
+    color: "#FFF",
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 12,
-    textAlign: 'center',
+    textAlign: "center",
   },
   betAmounts: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    justifyContent: "center",
+    flexWrap: "wrap",
     marginBottom: 12,
     gap: 6,
   },
   betAmountButton: {
-    backgroundColor: '#2A2A2A',
+    backgroundColor: "#2A2A2A",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: "#444",
     minWidth: 60,
   },
   selectedBet: {
-    borderColor: '#FFD700',
-    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    borderColor: "#FFD700",
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
   },
   betAmountText: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   ticketRewardInfo: {
-    color: '#10B981',
+    color: "#10B981",
     fontSize: 8,
     marginTop: 2,
-    fontStyle: 'italic',
-    textAlign: 'center',
+    fontStyle: "italic",
+    textAlign: "center",
   },
   currentBet: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 11,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 12,
-    textAlign: 'center',
-    backgroundColor: 'rgba(139, 0, 0, 0.3)',
+    textAlign: "center",
+    backgroundColor: "rgba(139, 0, 0, 0.3)",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FFD700',
+    borderColor: "#FFD700",
   },
   predictionContainer: {
-    width: '100%',
+    width: "100%",
     gap: 8,
   },
   predictionButton: {
     paddingVertical: 10,
     paddingHorizontal: 15,
     borderRadius: 8,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   lowButton: {
-    backgroundColor: '#DC2626',
+    backgroundColor: "#DC2626",
   },
   sevenButton: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: "#F59E0B",
   },
   highButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
   },
   predictionButtonText: {
-    color: '#FFF',
-    fontWeight: 'bold',
+    color: "#FFF",
+    fontWeight: "bold",
     fontSize: 12,
     flex: 1,
   },
   multiplierText: {
-    color: '#FFD700',
-    fontWeight: 'bold',
+    color: "#FFD700",
+    fontWeight: "bold",
     fontSize: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
   },
   rollButton: {
-    backgroundColor: '#6B7280',
+    backgroundColor: "#6B7280",
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 15,
     borderWidth: 2,
-    borderColor: '#4B5563',
-    alignItems: 'center',
+    borderColor: "#4B5563",
+    alignItems: "center",
   },
   rollButtonText: {
-    color: '#FFF',
-    fontWeight: 'bold',
+    color: "#FFF",
+    fontWeight: "bold",
     fontSize: 12,
   },
   playAgainButton: {
-    backgroundColor: '#10B981',
+    backgroundColor: "#10B981",
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 15,
     borderWidth: 2,
-    borderColor: '#059669',
-    alignItems: 'center',
+    borderColor: "#059669",
+    alignItems: "center",
   },
   playAgainText: {
-    color: '#FFF',
-    fontWeight: 'bold',
+    color: "#FFF",
+    fontWeight: "bold",
     fontSize: 12,
   },
   rulesContainer: {
-    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    backgroundColor: "rgba(26, 26, 26, 0.9)",
     borderRadius: 8,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#333',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    borderColor: "#333",
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   ruleItem: {
-    alignItems: 'center',
+    alignItems: "center",
     flex: 1,
   },
   ruleTitle: {
-    color: '#FFF',
+    color: "#FFF",
     fontSize: 10,
-    fontWeight: '600',
-    textAlign: 'center',
+    fontWeight: "600",
+    textAlign: "center",
     marginBottom: 2,
   },
   ruleMultiplier: {
-    color: '#10B981',
+    color: "#10B981",
     fontSize: 9,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: "bold",
+    textAlign: "center",
   },
   disabledButton: {
-    backgroundColor: '#1A1A1A',
-    borderColor: '#333',
+    backgroundColor: "#1A1A1A",
+    borderColor: "#333",
     opacity: 0.5,
   },
   // Estilos para animaciones
   animationContainer: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
+    position: "absolute",
+    top: "50%",
+    left: "50%",
     marginLeft: -80,
     marginTop: -60,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     zIndex: 1000,
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
     padding: 15,
     borderRadius: 12,
     borderWidth: 3,
@@ -989,44 +1112,113 @@ const styles = StyleSheet.create({
     height: 120,
   },
   winAnimation: {
-    borderColor: '#FFD700',
+    borderColor: "#FFD700",
   },
   loseAnimation: {
-    borderColor: '#EF4444',
+    borderColor: "#EF4444",
   },
   winText: {
-    color: '#FFD700',
+    color: "#FFD700",
     fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: "bold",
+    textAlign: "center",
     marginTop: 6,
   },
   loseText: {
-    color: '#EF4444',
+    color: "#EF4444",
     fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: "bold",
+    textAlign: "center",
     marginTop: 6,
   },
   winSubtext: {
-    color: '#FFF',
+    color: "#FFF",
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: "600",
     marginTop: 2,
-    textAlign: 'center',
+    textAlign: "center",
   },
   loseSubtext: {
-    color: '#FFF',
+    color: "#FFF",
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: "600",
     marginTop: 2,
-    textAlign: 'center',
+    textAlign: "center",
   },
   ticketsWonAnimation: {
-    color: '#10B981',
+    color: "#10B981",
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginTop: 4,
-    textAlign: 'center',
+    textAlign: "center",
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: "#1a1a1a",
+    padding: 24,
+    borderRadius: 16,
+    alignItems: "center",
+    borderWidth: 3,
+    borderColor: "#FFD700",
+    maxWidth: "80%",
+  },
+  tabBlockerText: {
+    color: "#FFD700",
+    fontSize: 18,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: "normal",
+    color: "#FFF",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: "transparent",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,
+    height: height * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
   },
 });

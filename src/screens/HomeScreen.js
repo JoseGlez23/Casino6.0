@@ -1,10 +1,5 @@
-import React, {
-  useState,
-  useMemo,
-  useEffect,
-  useCallback,
-  useRef,
-} from "react";
+// src/screens/HomeScreen.js
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -17,15 +12,15 @@ import {
   StatusBar,
   Platform,
   Alert,
-  Modal,
   RefreshControl,
-  Animated,
-  FlatList,
+  BackHandler,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../context/CoinsContext";
+import { useFocusEffect } from "@react-navigation/native";
+import ExitConfirmationModal from "../components/ExitConfirmationModal";
 
-const { width } = Dimensions.get("window");
+const { width, height } = Dimensions.get("window");
 
 // Componente para manejar imágenes con error
 const GameImage = ({ source, style }) => {
@@ -78,73 +73,66 @@ const GAME_IMAGES = {
   caribbanstud: require("../assets/caribbanstud.jpg"),
   threecardpoker: require("../assets/threecardpoker.jpg"),
   pajgow: require("../assets/paigow.jpg"),
-  default: require("../assets/blackjack.jpg"), // Usar una imagen existente como fallback
+  default: require("../assets/blackjack.jpg"),
 };
-
-// Banners del carrusel
-const BANNERS = [
-  {
-    id: 1,
-    image: require("../assets/banner1.png"),
-    title: "PROMOCIÓN ESPECIAL",
-  },
-  { id: 2, image: require("../assets/banner2.png"), title: "NUEVOS JUEGOS" },
-  {
-    id: 3,
-    image: require("../assets/banner3.png"),
-    title: "BONO DE BIENVENIDA",
-  },
-  { id: 4, image: require("../assets/banner4.png"), title: "TORNEOS ACTIVOS" },
-  {
-    id: 5,
-    image: require("../assets/banner5.png"),
-    title: "PREMIOS EXCLUSIVOS",
-  },
-  {
-    id: 6,
-    image: require("../assets/banner6.png"),
-    title: "OFERTAS LIMITADAS",
-  },
-  {
-    id: 7,
-    image: require("../assets/banner7.png"),
-    title: "EVENTOS ESPECIALES",
-  },
-];
 
 export default function HomeScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
-  const flatListRef = useRef(null);
-  const scrollX = useRef(new Animated.Value(0)).current;
+  const [showExitModal, setShowExitModal] = useState(false);
 
   const {
     manekiCoins,
-    addCoins,
-    subtractCoins,
+    tickets,
     canAfford,
-    getDailyBonus,
     refreshCoins,
     isLoading,
-    tickets
+    isAuthenticated,
+    forceRefresh,
   } = useCoins();
 
-  // Efecto para el carrusel automático
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentBannerIndex((prevIndex) => {
-        const nextIndex = (prevIndex + 1) % BANNERS.length;
-        flatListRef.current?.scrollToIndex({
-          index: nextIndex,
-          animated: true,
-        });
-        return nextIndex;
-      });
-    }, 5000); // Cambia cada 5 segundos
+  // Manejar el botón de retroceso físico SOLO en el HomeScreen - CORREGIDO
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBackPress = () => {
+        // Mostrar modal de confirmación en lugar de salir inmediatamente
+        setShowExitModal(true);
+        return true; // Previene el comportamiento por defecto
+      };
 
-    return () => clearInterval(interval);
-  }, []);
+      // CORRECCIÓN: Usar addEventListener correctamente
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        onBackPress
+      );
+
+      return () => {
+        // CORRECCIÓN: Usar remove() en lugar de removeEventListener
+        subscription.remove();
+      };
+    }, [])
+  );
+
+  const handleConfirmExit = () => {
+    setShowExitModal(false);
+    BackHandler.exitApp(); // Cierra la aplicación completamente
+  };
+
+  const handleCancelExit = () => {
+    setShowExitModal(false);
+  };
+
+  // Efecto para verificar datos corruptos y forzar recarga si es necesario
+  useEffect(() => {
+    if (isAuthenticated && !isLoading && manekiCoins === 0 && tickets === 0) {
+      console.log("🔄 Datos en 0 detectados, forzando recarga...");
+      const timer = setTimeout(() => {
+        forceRefresh();
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [manekiCoins, tickets, isLoading, isAuthenticated, forceRefresh]);
 
   // Función para manejar el refresh
   const onRefresh = useCallback(async () => {
@@ -153,10 +141,12 @@ export default function HomeScreen({ navigation }) {
       await refreshCoins();
     } catch (error) {
       console.error("Error en refresh:", error);
+      // Si hay error en refresh, intentar forceRefresh
+      await forceRefresh();
     } finally {
       setRefreshing(false);
     }
-  }, [refreshCoins]);
+  }, [refreshCoins, forceRefresh]);
 
   // Función optimizada para obtener imágenes
   const getGameImage = (imageKey) => {
@@ -559,69 +549,6 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   ));
 
-  // Componente Banner para el carrusel
-  const BannerItem = ({ item, index }) => (
-    <TouchableOpacity
-      style={styles.bannerItem}
-      activeOpacity={0.9}
-      onPress={() => {
-        // Acción al presionar el banner
-        Alert.alert(item.title, "Promoción especial activa");
-      }}
-    >
-      <Image
-        source={item.image}
-        style={styles.bannerImage}
-        resizeMode="cover"
-      />
-      <View style={styles.bannerOverlay}>
-        <Text style={styles.bannerTitle}>{item.title}</Text>
-        <View style={styles.bannerCta}>
-          <Text style={styles.bannerCtaText}>VER MÁS</Text>
-          <Ionicons name="arrow-forward" size={16} color="#FFD700" />
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  // Indicadores del carrusel
-  const renderBannerIndicators = () => (
-    <View style={styles.indicatorsContainer}>
-      {BANNERS.map((_, index) => {
-        const inputRange = [
-          (index - 1) * width,
-          index * width,
-          (index + 1) * width,
-        ];
-
-        const dotWidth = scrollX.interpolate({
-          inputRange,
-          outputRange: [8, 20, 8],
-          extrapolate: "clamp",
-        });
-
-        const opacity = scrollX.interpolate({
-          inputRange,
-          outputRange: [0.3, 1, 0.3],
-          extrapolate: "clamp",
-        });
-
-        return (
-          <Animated.View
-            key={index}
-            style={[
-              styles.indicator,
-              {
-                width: dotWidth,
-                opacity,
-              },
-            ]}
-          />
-        );
-      })}
-    </View>
-  );
-
   const renderGameSection = (
     title,
     games,
@@ -679,223 +606,239 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  // Formatear número con separadores de miles
-  const formatCoins = (coins) => {
-    return coins.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  // Formatear número con separadores de miles y abreviaturas para números grandes
+  const formatNumber = (number) => {
+    if (number >= 1000000) {
+      return (number / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+    }
+    if (number >= 1000) {
+      return (number / 1000).toFixed(1).replace(/\.0$/, "") + "K";
+    }
+    return number.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#8B0000" />
+    <>
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#8B0000" />
 
-      {/* Header Mejorado */}
-      <View style={styles.header}>
-        {/* Logo y Título - SIN ICONO DE HUELLA */}
-        <View style={styles.logoContainer}>
-          <View style={styles.titleContainer}>
+        {/* Header Mejorado - Título fijo a la izquierda y saldos a la derecha */}
+        <View style={styles.header}>
+          {/* Título fijo a la izquierda */}
+          <View style={styles.titleLeftContainer}>
             <Text style={styles.japaneseTitle}>招きカジノ</Text>
             <Text style={styles.englishTitle}>MANEKI CASINO</Text>
           </View>
-        </View>
 
-        {/* Saldo y Perfil */}
-        <View style={styles.headerRight}>
-          {/* Coins */}
-          <TouchableOpacity
-            style={styles.coinsDisplay}
-            onPress={handleAddCoins}
-          >
-            <View style={styles.coinsContent}>
-              <Ionicons name="diamond" size={18} color="#FFD700" />
-              <Text style={styles.coinsText}>{formatCoins(manekiCoins)}</Text>
-              <Ionicons
-                name="add-circle"
-                size={20}
-                color="#FFD700"
-                style={styles.addIcon}
-              />
-            </View>
-          </TouchableOpacity>
-
-          {/* Tickets NEW */}
-          <TouchableOpacity
-            style={[styles.coinsDisplay, { marginLeft: 8 }]}
-            onPress={() => navigation.navigate("Tickets")}
-          >
-            <View style={styles.coinsContent}>
-              <Ionicons name="ticket-outline" size={18} color="#FFD700" />
-              <Text style={styles.coinsText}>{formatCoins(tickets)}</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Perfil */}
-          <TouchableOpacity
-            style={styles.profileButton}
-            onPress={() => navigation.navigate("Profile")}
-          >
-            <Ionicons name="person-circle" size={38} color="#FFD700" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Contenido principal */}
-      <ScrollView
-        style={styles.scrollContainer}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews={true}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={["#FFD700"]}
-            tintColor="#FFD700"
-            title="Actualizando monedas..."
-            titleColor="#FFD700"
-          />
-        }
-      >
-        {/* Carrusel de Banners */}
-        <View style={styles.bannerSection}>
-          <FlatList
-            ref={flatListRef}
-            data={BANNERS}
-            renderItem={BannerItem}
-            keyExtractor={(item) => item.id.toString()}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={Animated.event(
-              [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-              { useNativeDriver: false }
-            )}
-            onMomentumScrollEnd={(event) => {
-              const newIndex = Math.round(
-                event.nativeEvent.contentOffset.x / width
-              );
-              setCurrentBannerIndex(newIndex);
-            }}
-            scrollEventThrottle={16}
-          />
-          {renderBannerIndicators()}
-        </View>
-
-        {/* Barra de búsqueda */}
-        <View style={styles.searchContainer}>
-          <Ionicons
-            name="search"
-            size={20}
-            color="#FF6B6B"
-            style={styles.searchIcon}
-          />
-          <TextInput
-            placeholder="Buscar juegos..."
-            placeholderTextColor="#999"
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery("")}>
-              <Ionicons name="close-circle" size={18} color="#FF6B6B" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Mostrar resultados de búsqueda o secciones normales */}
-        {searchQuery.trim() ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                RESULTADOS DE BÚSQUEDA ({filteredGames.length})
-              </Text>
-            </View>
-            {filteredGames.length === 0 ? (
-              <View style={styles.noResults}>
-                <Ionicons name="search-outline" size={50} color="#666" />
-                <Text style={styles.noResultsText}>
-                  No se encontraron juegos
+          {/* Saldo y Perfil - Posición fija a la derecha */}
+          <View style={styles.headerRight}>
+            {/* Coins */}
+            <TouchableOpacity
+              style={styles.coinsDisplay}
+              onPress={handleAddCoins}
+            >
+              <View style={styles.coinsContent}>
+                <Ionicons name="diamond" size={10} color="#FFD700" />
+                <Text
+                  style={styles.coinsText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {formatNumber(manekiCoins)}
                 </Text>
-                <Text style={styles.noResultsSubtext}>
-                  Intenta con otros términos de búsqueda
-                </Text>
+                <Ionicons
+                  name="add-circle"
+                  size={14}
+                  color="#FFD700"
+                  style={styles.addIcon}
+                />
               </View>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.horizontalScroll}
-                removeClippedSubviews={true}
-              >
-                {filteredGames.map((game) => (
-                  <GameCard key={game.id} game={game} size="large" />
-                ))}
-              </ScrollView>
+            </TouchableOpacity>
+
+            {/* Tickets */}
+            <TouchableOpacity
+              style={styles.ticketsDisplay}
+              onPress={() => navigation.navigate("Tickets")}
+            >
+              <View style={styles.ticketsContent}>
+                <Ionicons name="ticket-outline" size={11} color="#FFD700" />
+                <Text
+                  style={styles.ticketsText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {formatNumber(tickets)}
+                </Text>
+                <Ionicons
+                  name="cash-outline"
+                  size={12}
+                  color="#FFD700"
+                  style={styles.addIcon}
+                />
+              </View>
+            </TouchableOpacity>
+
+            {/* Perfil */}
+            <TouchableOpacity
+              style={styles.profileButton}
+              onPress={() => navigation.navigate("Profile")}
+            >
+              <Ionicons name="person-circle" size={36} color="#FFD700" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Contenido principal */}
+        <ScrollView
+          style={styles.scrollContainer}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={true}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#FFD700"]}
+              tintColor="#FFD700"
+              title="Actualizando monedas..."
+              titleColor="#FFD700"
+            />
+          }
+        >
+          {/* Barra de búsqueda */}
+          <View style={styles.searchContainer}>
+            <Ionicons
+              name="search"
+              size={20}
+              color="#FF6B6B"
+              style={styles.searchIcon}
+            />
+            <TextInput
+              placeholder="Buscar juegos..."
+              placeholderTextColor="#999"
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <Ionicons name="close-circle" size={18} color="#FF6B6B" />
+              </TouchableOpacity>
             )}
           </View>
-        ) : (
-          <>
-            {/* Juegos Destacados */}
-            {renderFeaturedGames()}
 
-            {/* Juegos Populares */}
-            {renderGameSection(
-              "JUEGOS POPULARES",
-              popularGames,
-              true,
-              "Juegos"
-            )}
-
-            {/* Tragamonedas */}
-            {renderGameSection("TRAGAMONEDAS", slotGames, true, "Tragamonedas")}
-
-            {/* Juegos de Cartas */}
-            {renderGameSection("JUEGOS DE CARTAS", cardGames, true, "Juegos")}
-
-            {/* Juegos de Dados */}
-            {renderGameSection("JUEGOS DE DADOS", diceGames, true, "Juegos")}
-
-            {/* Juegos de Ruedas */}
-            {renderGameSection("JUEGOS DE RUEDAS", wheelGames, true, "Juegos")}
-
-            {/* Juegos de Mesa */}
-            {renderGameSection("JUEGOS DE MESA", tableGames, true, "Juegos")}
-
-            {/* Juegos Especiales */}
-            {renderGameSection(
-              "JUEGOS ESPECIALES",
-              specialtyGames,
-              true,
-              "Juegos"
-            )}
-
-            {/* Estadísticas */}
-            <View style={styles.statsContainer}>
-              <View style={styles.statCard}>
-                <Ionicons name="trophy" size={24} color="#FFD700" />
-                <Text style={styles.statNumber}>{featuredGames.length}+</Text>
-                <Text style={styles.statLabel}>JUEGOS</Text>
+          {/* Mostrar resultados de búsqueda o secciones normales */}
+          {searchQuery.trim() ? (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  RESULTADOS DE BÚSQUEDA ({filteredGames.length})
+                </Text>
               </View>
-              <View style={styles.statCard}>
-                <Ionicons name="people" size={24} color="#FFD700" />
-                <Text style={styles.statNumber}>50K+</Text>
-                <Text style={styles.statLabel}>JUGADORES</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Ionicons name="star" size={24} color="#FFD700" />
-                <Text style={styles.statNumber}>99%</Text>
-                <Text style={styles.statLabel}>SATISFACCIÓN</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Ionicons name="shield-checkmark" size={24} color="#FFD700" />
-                <Text style={styles.statNumber}>100%</Text>
-                <Text style={styles.statLabel}>SEGURO</Text>
-              </View>
+              {filteredGames.length === 0 ? (
+                <View style={styles.noResults}>
+                  <Ionicons name="search-outline" size={50} color="#666" />
+                  <Text style={styles.noResultsText}>
+                    No se encontraron juegos
+                  </Text>
+                  <Text style={styles.noResultsSubtext}>
+                    Intenta con otros términos de búsqueda
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.horizontalScroll}
+                  removeClippedSubviews={true}
+                >
+                  {filteredGames.map((game) => (
+                    <GameCard key={game.id} game={game} size="large" />
+                  ))}
+                </ScrollView>
+              )}
             </View>
-          </>
-        )}
-      </ScrollView>
-    </View>
+          ) : (
+            <>
+              {/* Juegos Destacados */}
+              {renderFeaturedGames()}
+
+              {/* Juegos Populares */}
+              {renderGameSection(
+                "JUEGOS POPULARES",
+                popularGames,
+                true,
+                "Juegos"
+              )}
+
+              {/* Tragamonedas */}
+              {renderGameSection(
+                "TRAGAMONEDAS",
+                slotGames,
+                true,
+                "Tragamonedas"
+              )}
+
+              {/* Juegos de Cartas */}
+              {renderGameSection("JUEGOS DE CARTAS", cardGames, true, "Juegos")}
+
+              {/* Juegos de Dados */}
+              {renderGameSection("JUEGOS DE DADOS", diceGames, true, "Juegos")}
+
+              {/* Juegos de Ruedas */}
+              {renderGameSection(
+                "JUEGOS DE RUEDAS",
+                wheelGames,
+                true,
+                "Juegos"
+              )}
+
+              {/* Juegos de Mesa */}
+              {renderGameSection("JUEGOS DE MESA", tableGames, true, "Juegos")}
+
+              {/* Juegos Especiales */}
+              {renderGameSection(
+                "JUEGOS ESPECIALES",
+                specialtyGames,
+                true,
+                "Juegos"
+              )}
+
+              {/* Estadísticas */}
+              <View style={styles.statsContainer}>
+                <View style={styles.statCard}>
+                  <Ionicons name="trophy" size={24} color="#FFD700" />
+                  <Text style={styles.statNumber}>{featuredGames.length}+</Text>
+                  <Text style={styles.statLabel}>JUEGOS</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Ionicons name="people" size={24} color="#FFD700" />
+                  <Text style={styles.statNumber}>50K+</Text>
+                  <Text style={styles.statLabel}>JUGADORES</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Ionicons name="star" size={24} color="#FFD700" />
+                  <Text style={styles.statNumber}>99%</Text>
+                  <Text style={styles.statLabel}>SATISFACCIÓN</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Ionicons name="shield-checkmark" size={24} color="#FFD700" />
+                  <Text style={styles.statNumber}>100%</Text>
+                  <Text style={styles.statLabel}>SEGURO</Text>
+                </View>
+              </View>
+            </>
+          )}
+        </ScrollView>
+      </View>
+
+      {/* Modal de confirmación de salida - SOLO en el HomeScreen */}
+      <ExitConfirmationModal
+        visible={showExitModal}
+        onConfirm={handleConfirmExit}
+        onCancel={handleCancelExit}
+      />
+    </>
   );
 }
 
@@ -908,23 +851,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 60 : 40,
-    paddingBottom: 15,
+    paddingHorizontal: width * 0.05,
+    paddingTop: Platform.OS === "ios" ? height * 0.06 : height * 0.04,
+    paddingBottom: height * 0.015,
     backgroundColor: "#8B0000",
     borderBottomWidth: 3,
     borderBottomColor: "#FFD700",
   },
-  logoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+  titleLeftContainer: {
     flex: 1,
-  },
-  titleContainer: {
-    flex: 1,
+    justifyContent: "center",
   },
   japaneseTitle: {
-    fontSize: 20,
+    fontSize: width * 0.05,
     fontWeight: "bold",
     color: "#FFD700",
     fontFamily: Platform.OS === "ios" ? "Hiragino Mincho ProN" : "serif",
@@ -933,7 +872,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   englishTitle: {
-    fontSize: 12,
+    fontSize: width * 0.03,
     color: "#FFF",
     fontWeight: "300",
     letterSpacing: 2,
@@ -942,141 +881,111 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: width * 0.015,
+    flexShrink: 1,
   },
   coinsDisplay: {
     backgroundColor: "rgba(0, 0, 0, 0.3)",
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "#FFD700",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingHorizontal: width * 0.025,
+    paddingVertical: height * 0.007,
+    minWidth: width * 0.12,
+    maxWidth: width * 0.18,
   },
   coinsContent: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "center",
+    gap: width * 0.008,
   },
   coinsText: {
     color: "#FFD700",
-    fontSize: 16,
+    fontSize: width * 0.028,
     fontWeight: "bold",
+    includeFontPadding: false,
+    textAlign: "center",
+    minWidth: width * 0.04,
+  },
+  ticketsDisplay: {
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    paddingHorizontal: width * 0.05,
+    paddingVertical: height * 0.007,
+    minWidth: width * 0.12,
+    maxWidth: width * 0.18,
+  },
+  ticketsContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: width * 0.008,
+  },
+  ticketsText: {
+    color: "#FFD700",
+    fontSize: width * 0.028,
+    fontWeight: "bold",
+    includeFontPadding: false,
+    textAlign: "center",
+    minWidth: width * 0.04,
   },
   addIcon: {
-    marginLeft: 4,
+    marginLeft: 1,
   },
   profileButton: {
     padding: 2,
+    marginLeft: width * 0.005,
   },
   scrollContainer: {
     flex: 1,
-  },
-  // Estilos del carrusel de banners
-  bannerSection: {
-    height: 200,
-    marginBottom: 20,
-    position: "relative",
-  },
-  bannerItem: {
-    width: width,
-    height: 200,
-    position: "relative",
-  },
-  bannerImage: {
-    width: "100%",
-    height: "100%",
-  },
-  bannerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.3)",
-    justifyContent: "flex-end",
-    padding: 20,
-  },
-  bannerTitle: {
-    color: "#FFD700",
-    fontSize: 24,
-    fontWeight: "bold",
-    textShadowColor: "rgba(0,0,0,0.8)",
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 5,
-    marginBottom: 10,
-  },
-  bannerCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(139, 0, 0, 0.8)",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 5,
-  },
-  bannerCtaText: {
-    color: "#FFD700",
-    fontSize: 14,
-    fontWeight: "bold",
-    letterSpacing: 1,
-  },
-  indicatorsContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    position: "absolute",
-    bottom: 15,
-    left: 0,
-    right: 0,
-    gap: 8,
-  },
-  indicator: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#FFD700",
-    marginHorizontal: 4,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(26, 26, 26, 0.8)",
-    marginHorizontal: 20,
-    marginVertical: 10,
+    marginHorizontal: width * 0.05,
+    marginVertical: height * 0.015,
     borderRadius: 15,
-    paddingHorizontal: 15,
-    height: 50,
+    paddingHorizontal: width * 0.04,
+    height: height * 0.06,
     borderWidth: 2,
     borderColor: "rgba(255, 107, 107, 0.6)",
   },
   searchInput: {
     flex: 1,
     color: "#FFF",
-    fontSize: 16,
-    paddingHorizontal: 10,
+    fontSize: width * 0.04,
+    paddingHorizontal: width * 0.02,
     fontWeight: "500",
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: width * 0.02,
   },
   section: {
-    marginBottom: 30,
+    marginBottom: height * 0.03,
   },
   featuredSection: {
-    marginBottom: 25,
+    marginBottom: height * 0.025,
   },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
-    marginBottom: 15,
+    paddingHorizontal: width * 0.05,
+    marginBottom: height * 0.015,
   },
   sectionTitle: {
     color: "#FFD700",
-    fontSize: 18,
+    fontSize: width * 0.045,
     fontWeight: "bold",
     letterSpacing: 1,
   },
   featuredSectionTitle: {
     color: "#FFD700",
-    fontSize: 22,
+    fontSize: width * 0.05,
     fontWeight: "bold",
     letterSpacing: 1,
     textAlign: "center",
@@ -1089,21 +998,21 @@ const styles = StyleSheet.create({
   },
   seeAllText: {
     color: "#FFD700",
-    fontSize: 12,
+    fontSize: width * 0.03,
     fontWeight: "bold",
     letterSpacing: 1,
   },
   horizontalScroll: {
-    paddingLeft: 20,
+    paddingLeft: width * 0.05,
   },
   featuredScroll: {
-    paddingLeft: 20,
+    paddingLeft: width * 0.05,
   },
   gameCard: {
-    width: width * 0.75,
-    height: 200,
+    width: width * 0.7,
+    height: height * 0.22,
     borderRadius: 15,
-    marginRight: 15,
+    marginRight: width * 0.04,
     overflow: "hidden",
     elevation: 8,
     shadowColor: "#8B0000",
@@ -1112,8 +1021,8 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   featuredGameCard: {
-    width: width * 0.85,
-    height: 250,
+    width: width * 0.8,
+    height: height * 0.28,
     borderWidth: 3,
     borderColor: "#FFD700",
     elevation: 12,
@@ -1123,8 +1032,8 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
   },
   gameCardLarge: {
-    width: width * 0.8,
-    height: 220,
+    width: width * 0.75,
+    height: height * 0.24,
   },
   gameImage: {
     width: "100%",
@@ -1148,7 +1057,7 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     color: "#FFD700",
-    fontSize: 12,
+    fontSize: width * 0.03,
     fontWeight: "bold",
     marginTop: 8,
     textAlign: "center",
@@ -1157,7 +1066,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "flex-end",
-    padding: 15,
+    padding: width * 0.04,
   },
   gameInfo: {
     flexDirection: "row",
@@ -1166,7 +1075,7 @@ const styles = StyleSheet.create({
   },
   gameName: {
     color: "#FFF",
-    fontSize: 16,
+    fontSize: width * 0.04,
     fontWeight: "bold",
     flex: 1,
     textShadowColor: "rgba(0,0,0,0.8)",
@@ -1175,10 +1084,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   gameNameLarge: {
-    fontSize: 18,
+    fontSize: width * 0.045,
   },
   featuredGameName: {
-    fontSize: 20,
+    fontSize: width * 0.05,
     color: "#FFD700",
     textShadowColor: "rgba(0,0,0,0.9)",
     textShadowOffset: { width: 2, height: 2 },
@@ -1188,8 +1097,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFD700",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: width * 0.03,
+    paddingVertical: height * 0.008,
     borderRadius: 20,
     gap: 4,
   },
@@ -1197,26 +1106,26 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.8)",
     borderWidth: 1,
     borderColor: "#FFD700",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingHorizontal: width * 0.035,
+    paddingVertical: height * 0.01,
   },
   playButtonText: {
     color: "#000",
     fontWeight: "bold",
-    fontSize: 12,
+    fontSize: width * 0.03,
     letterSpacing: 0.5,
   },
   featuredPlayButtonText: {
     color: "#FFD700",
-    fontSize: 14,
+    fontSize: width * 0.035,
   },
   minBetBadge: {
     position: "absolute",
-    top: 12,
-    right: 12,
+    top: width * 0.03,
+    right: width * 0.03,
     backgroundColor: "rgba(0, 0, 0, 0.7)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: width * 0.02,
+    paddingVertical: height * 0.005,
     borderRadius: 8,
   },
   featuredMinBetBadge: {
@@ -1224,90 +1133,90 @@ const styles = StyleSheet.create({
   },
   minBetText: {
     color: "#FFD700",
-    fontSize: 10,
+    fontSize: width * 0.025,
     fontWeight: "bold",
   },
   featuredMinBetText: {
     color: "#000",
-    fontSize: 11,
+    fontSize: width * 0.028,
   },
   popularBadge: {
     position: "absolute",
-    top: 12,
-    left: 12,
+    top: width * 0.03,
+    left: width * 0.03,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FF6B6B",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: width * 0.025,
+    paddingVertical: height * 0.005,
     borderRadius: 12,
     gap: 4,
   },
   popularText: {
     color: "#FFF",
-    fontSize: 10,
+    fontSize: width * 0.025,
     fontWeight: "bold",
     letterSpacing: 0.5,
   },
   featuredBadge: {
     position: "absolute",
-    top: 12,
-    left: 12,
+    top: width * 0.03,
+    left: width * 0.03,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFD700",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: width * 0.025,
+    paddingVertical: height * 0.005,
     borderRadius: 12,
     gap: 4,
   },
   featuredBadgeText: {
     color: "#000",
-    fontSize: 10,
+    fontSize: width * 0.025,
     fontWeight: "bold",
     letterSpacing: 0.5,
   },
   noResults: {
     alignItems: "center",
-    padding: 40,
-    marginHorizontal: 20,
+    padding: width * 0.1,
+    marginHorizontal: width * 0.05,
   },
   noResultsText: {
     color: "#FFF",
-    fontSize: 18,
+    fontSize: width * 0.045,
     fontWeight: "bold",
-    marginTop: 20,
-    marginBottom: 10,
+    marginTop: height * 0.02,
+    marginBottom: height * 0.01,
   },
   noResultsSubtext: {
     color: "#999",
-    fontSize: 14,
+    fontSize: width * 0.035,
     textAlign: "center",
   },
   statsContainer: {
     flexDirection: "row",
-    paddingHorizontal: 20,
-    marginBottom: 30,
-    gap: 10,
+    paddingHorizontal: width * 0.05,
+    marginBottom: height * 0.03,
+    gap: width * 0.025,
   },
   statCard: {
     flex: 1,
     backgroundColor: "#1a1a1a",
-    padding: 15,
+    padding: width * 0.04,
     borderRadius: 12,
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#333",
-    gap: 8,
+    gap: height * 0.01,
   },
   statNumber: {
     color: "#FFD700",
-    fontSize: 16,
+    fontSize: width * 0.04,
     fontWeight: "bold",
   },
   statLabel: {
     color: "#FFF",
-    fontSize: 10,
+    fontSize: width * 0.025,
     fontWeight: "500",
     textAlign: "center",
   },

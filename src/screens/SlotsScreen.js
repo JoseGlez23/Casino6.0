@@ -14,15 +14,25 @@ import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
 
+// Cargar todas las imágenes estáticamente fuera del componente
+const SLOT_IMAGES = {
+  classic: require('../assets/classicslots.jpg'),
+  fruit: require('../assets/fruitslots.jpg'),
+  diamond: require('../assets/diamondslots.jpg'),
+  luckyseven: require('../assets/luckyseven.jpg'),
+  safari: require('../assets/animalslots.jpg'),
+  default: require('../assets/classicslots.jpg')
+};
+
 export default function SlotsScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Solo juegos de tragamonedas con sus imágenes reales
+  // Solo juegos de tragamonedas con sus imágenes reales (los mismos que tenías)
   const slotGames = [
     { 
       id: 1, 
       name: 'TRAGAPERRAS CLÁSICA', 
-      image: require('../assets/classicslots.jpg'),
+      image: SLOT_IMAGES.classic,
       screen: 'ClassicSlots',
       color: '#059669',
       description: 'Tragamonedas clásica con símbolos tradicionales'
@@ -30,7 +40,7 @@ export default function SlotsScreen({ navigation }) {
     { 
       id: 2, 
       name: 'FRUIT SLOTS', 
-      image: require('../assets/fruitslots.jpg'),
+      image: SLOT_IMAGES.fruit,
       screen: 'FruitSlots',
       color: '#EA580C',
       description: 'Frutas coloridas y premios jugosos'
@@ -38,7 +48,7 @@ export default function SlotsScreen({ navigation }) {
     { 
       id: 3, 
       name: 'DIAMOND SLOTS', 
-      image: require('../assets/diamondslots.jpg'),
+      image: SLOT_IMAGES.diamond,
       screen: 'DiamondSlots',
       color: '#7C3AED',
       description: 'Diamantes brillantes y grandes premios'
@@ -46,7 +56,7 @@ export default function SlotsScreen({ navigation }) {
     { 
       id: 4, 
       name: 'LUCKY 7 SLOTS', 
-      image: require('../assets/luckyseven.jpg'),
+      image: SLOT_IMAGES.luckyseven,
       screen: 'LuckySevenSlots',
       color: '#CA8A04',
       description: 'Símbolos de la suerte y jackpots'
@@ -54,7 +64,7 @@ export default function SlotsScreen({ navigation }) {
     { 
       id: 5, 
       name: 'SAFARI SLOTS', 
-      image: require('../assets/animalslots.jpg'),
+      image: SLOT_IMAGES.safari,
       screen: 'AnimalSlots',
       color: '#16A34A',
       description: 'Aventura salvaje con animales exóticos'
@@ -95,33 +105,41 @@ export default function SlotsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header idéntico al de GamesScreen */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>TRAGAMONEDAS</Text>
+        <View style={styles.titleGlow}>
+          <Text style={styles.japaneseTitle}>招きカジノ</Text>
+        </View>
+        <View style={styles.subtitleGlow}>
+          <Text style={styles.englishTitle}>MANEKI CASINO</Text>
+        </View>
         <Text style={styles.headerSubtitle}>
-          {filteredGames.length} máquinas disponibles
+          {filteredGames.length} tragamonedas disponibles
         </Text>
       </View>
 
-      {/* Barra de búsqueda */}
+      {/* Barra de búsqueda idéntica */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={24} color="#666" style={styles.searchIcon} />
+        <Ionicons name="search" size={24} color="#FF6B6B" style={styles.searchIcon} />
         <TextInput
           placeholder="Buscar tragamonedas..."
-          placeholderTextColor="#666"
+          placeholderTextColor="#999"
           style={styles.searchInput}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={24} color="#666" />
+            <Ionicons name="close-circle" size={20} color="#FF6B6B" />
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Grid de tragamonedas */}
-      <ScrollView style={styles.gamesContainer} showsVerticalScrollIndicator={false}>
+      {/* Grid de tragamonedas - Grandes como en GamesScreen */}
+      <ScrollView 
+        style={styles.gamesContainer} 
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.gamesGrid}>
           {filteredGames.map((game) => (
             <GameCard key={game.id} game={game} />
@@ -138,13 +156,13 @@ export default function SlotsScreen({ navigation }) {
           </View>
         )}
 
-        {/* Información adicional */}
+        {/* Información adicional sobre tragamonedas */}
         <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>✨ Características de las Tragamonedas</Text>
+          <Text style={styles.infoTitle}>🎰 Características de las Tragamonedas</Text>
           <View style={styles.featuresGrid}>
             <View style={styles.feature}>
               <Ionicons name="trophy" size={24} color="#FFD700" />
-              <Text style={styles.featureText}>Jackpots Grandes</Text>
+              <Text style={styles.featureText}>Jackpots Progresivos</Text>
             </View>
             <View style={styles.feature}>
               <Ionicons name="sync" size={24} color="#FFD700" />
@@ -152,11 +170,11 @@ export default function SlotsScreen({ navigation }) {
             </View>
             <View style={styles.feature}>
               <Ionicons name="diamond" size={24} color="#FFD700" />
-              <Text style={styles.featureText}>Símbolos Especiales</Text>
+              <Text style={styles.featureText}>Símbolos Wild</Text>
             </View>
             <View style={styles.feature}>
               <Ionicons name="bonfire" size={24} color="#FFD700" />
-              <Text style={styles.featureText}>Bonus Rounds</Text>
+              <Text style={styles.featureText}>Bonus Multiplicadores</Text>
             </View>
           </View>
         </View>
@@ -172,42 +190,72 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 25,
-    paddingTop: 20,
+    paddingTop: 60,
     paddingBottom: 15,
     backgroundColor: '#1a1a1a',
-    borderBottomWidth: 2,
+    borderBottomWidth: 3,
     borderBottomColor: '#FFD700',
+    alignItems: 'center',
   },
-  headerTitle: {
-    color: '#FFD700',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
+  titleGlow: {
+    shadowColor: "#8B0000",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  japaneseTitle: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: "#FF0000",
+    textShadowColor: "#FF6B6B",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+    marginBottom: 4,
+  },
+  subtitleGlow: {
+    shadowColor: "#D4AF37",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  englishTitle: {
+    fontSize: 16,
+    color: "#FFD700",
+    fontWeight: "300",
+    letterSpacing: 3,
+    marginBottom: 8,
   },
   headerSubtitle: {
     color: '#FFF',
     fontSize: 14,
     textAlign: 'center',
-    marginTop: 5,
     opacity: 0.8,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: 'rgba(26, 26, 26, 0.8)',
     marginHorizontal: 25,
     marginVertical: 20,
     borderRadius: 15,
     paddingHorizontal: 20,
     height: 55,
     borderWidth: 2,
-    borderColor: '#333',
+    borderColor: 'rgba(255, 107, 107, 0.6)',
+    elevation: 8,
+    shadowColor: '#8B0000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
   searchInput: {
     flex: 1,
     color: '#FFF',
     fontSize: 16,
     paddingHorizontal: 15,
+    fontWeight: '500',
   },
   searchIcon: {
     marginRight: 10,
@@ -228,10 +276,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     overflow: 'hidden',
     elevation: 8,
-    shadowColor: '#000',
+    shadowColor: '#8B0000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
   gameImage: {
     width: '100%',
@@ -239,7 +287,7 @@ const styles = StyleSheet.create({
   },
   gameOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
     padding: 15,
   },
@@ -251,11 +299,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 5,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
   gameDescription: {
-    color: '#CCC',
+    color: '#DDD',
     fontSize: 12,
     marginBottom: 10,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   playButton: {
     flexDirection: 'row',
@@ -289,11 +343,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   infoSection: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: 'rgba(26, 26, 26, 0.8)',
     padding: 20,
     borderRadius: 15,
     marginTop: 10,
     marginBottom: 30,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
   },
   infoTitle: {
     color: '#FFD700',
@@ -317,5 +373,6 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     marginLeft: 10,
+    fontWeight: '500',
   },
 });

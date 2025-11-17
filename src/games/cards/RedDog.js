@@ -1,5 +1,5 @@
 // src/games/cards/RedDog.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,12 +13,150 @@ import {
   Vibration,
   Alert,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
 import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
+
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
+
+  return (
+    <TouchableOpacity 
+      style={styles.tabBlocker} 
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>
+            Termina el juego primero
+          </Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        handleClose();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  const handleClose = () => {
+    // Animación de salida
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onClose();
+    });
+  };
+
+  const handleModalPress = () => {
+    handleClose();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlayTransparent} 
+        activeOpacity={1}
+        onPress={handleModalPress}
+      >
+        <Animated.View 
+          ref={modalRef}
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 // Hook de sonidos para Red Dog
 const useGameSounds = () => {
@@ -173,7 +311,7 @@ const LoseAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="sad-outline" size={80} color="#EF4444" />
+      <Ionicons name="sad-outline" size={60} color="#EF4444" />
       <Text style={styles.loseText}>¡PERDISTE!</Text>
     </Animated.View>
   );
@@ -226,34 +364,98 @@ const WinAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="trophy" size={80} color="#FFD700" />
+      <Ionicons name="trophy" size={60} color="#FFD700" />
       <Text style={styles.winText}>¡GANASTE!</Text>
     </Animated.View>
   );
 };
 
-// Tabla de premios de tickets para Red Dog
+// Componente de Suerte Aumentada - Solo imagen
+const LuckBoostImage = ({ show, winStreak, onHide }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+
+  useEffect(() => {
+    if (show) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 150,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        onHide();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+    }
+  }, [show]);
+
+  if (!show) return null;
+
+  const getImageSource = () => {
+    if (winStreak >= 8) {
+      return require("../../assets/suertex50.png");
+    } else if (winStreak >= 5) {
+      return require("../../assets/suertex20.png");
+    } else {
+      return require("../../assets/suertex10.png");
+    }
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.luckBoostImageContainer,
+        {
+          opacity: fadeAnim,
+          transform: [{ scale: scaleAnim }],
+        },
+      ]}
+    >
+      <Image 
+        source={getImageSource()} 
+        style={styles.luckBoostImageLarge}
+        resizeMode="contain"
+      />
+    </Animated.View>
+  );
+};
+
+// Tabla de premios de tickets para Red Dog - VALORES CONSISTENTES
 const getTicketRewards = (betAmount, multiplier, isWin = false) => {
   if (!isWin) return 0;
 
+  // Mismos valores base que otros juegos para mantener consistencia
   const baseRewards = {
-    50: { 1: 50, 2: 100, 4: 200, 5: 250 },
-    100: { 1: 100, 2: 200, 4: 400, 5: 500 },
-    250: { 1: 250, 2: 500, 4: 1000, 5: 1250 },
-    500: { 1: 500, 2: 1000, 4: 2000, 5: 2500 },
+    50: { 1: 60, 2: 120, 4: 240, 5: 300 },
+    100: { 1: 120, 2: 240, 4: 480, 5: 600 },
+    250: { 1: 300, 2: 600, 4: 1200, 5: 1500 },
+    500: { 1: 600, 2: 1200, 4: 2400, 5: 3000 },
   };
   return baseRewards[betAmount]?.[multiplier] || 0;
 };
 
-// Tabla de premios de Maneki Coins
+// Tabla de premios de Maneki Coins - VALORES CONSISTENTES
 const getCoinRewards = (betAmount, multiplier, isWin = false) => {
   if (!isWin) return 0;
 
   const baseRewards = {
-    50: { 1: 50, 2: 100, 4: 200, 5: 250 },
-    100: { 1: 100, 2: 200, 4: 400, 5: 500 },
-    250: { 1: 250, 2: 500, 4: 1000, 5: 1250 },
-    500: { 1: 500, 2: 1000, 4: 2000, 5: 2500 },
+    50: { 1: 60, 2: 120, 4: 240, 5: 300 },
+    100: { 1: 120, 2: 240, 4: 480, 5: 600 },
+    250: { 1: 300, 2: 600, 4: 1200, 5: 1500 },
+    500: { 1: 600, 2: 1200, 4: 2400, 5: 3000 },
   };
   return baseRewards[betAmount]?.[multiplier] || 0;
 };
@@ -279,10 +481,83 @@ export default function RedDog({ navigation }) {
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [ticketsWon, setTicketsWon] = useState(0);
   const [coinsWon, setCoinsWon] = useState(0);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  
+  // Estados CORREGIDOS: ahora es racha de victorias
+  const [winStreak, setWinStreak] = useState(0);
+  const [showLuckBoost, setShowLuckBoost] = useState(false);
+
+  // NUEVOS ESTADOS para controlar la navegación
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
 
   const cardAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
+
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR - NUEVO
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowTabBlocker(true);
+        setTimeout(() => setShowTabBlocker(false), 2000);
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso - CORREGIDO
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameState === "dealing" || gameState === "playing" || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener('beforeRemove', (e) => {
+      if (gameState === "dealing" || gameState === "playing" || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, gameState, gameInProgress]);
 
   useEffect(() => {
     const initializeAudio = async () => {
@@ -296,6 +571,11 @@ export default function RedDog({ navigation }) {
     };
     initializeAudio();
   }, []);
+
+  // Función para determinar si el jugador gana automáticamente (5% de probabilidad)
+  const shouldAutoWin = () => {
+    return Math.random() < 0.05;
+  };
 
   const cardValues = {
     2: 2,
@@ -367,6 +647,21 @@ export default function RedDog({ navigation }) {
     setTimeout(() => setShowLoseAnimation(false), 3000);
   };
 
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
+  const handleHideLuckBoost = () => {
+    setShowLuckBoost(false);
+  };
+
+  // Verificar y mostrar boost de suerte basado en racha de VICTORIAS
+  const checkAndShowLuckBoost = () => {
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+    }
+  };
+
   const calculateSpreadInfo = (card1, card2) => {
     const spread = Math.abs(card1.numeric - card2.numeric) - 1;
 
@@ -410,6 +705,15 @@ export default function RedDog({ navigation }) {
         "No tienes suficientes Maneki Coins para esta apuesta"
       );
       return;
+    }
+
+    // Marcar que el juego está en progreso
+    setGameInProgress(true);
+
+    // Mostrar boost de suerte si hay racha de victorias
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     setBet(betAmount);
@@ -465,7 +769,35 @@ export default function RedDog({ navigation }) {
 
     // Repartir tercera carta
     setTimeout(async () => {
-      const thirdCard = dealCard();
+      const autoWin = shouldAutoWin();
+      let thirdCard;
+
+      if (autoWin) {
+        // Victoria automática - generar carta que asegure la victoria
+        const [card1, card2] = cards;
+        const minCard = Math.min(card1.numeric, card2.numeric);
+        const maxCard = Math.max(card1.numeric, card2.numeric);
+        
+        // Generar una carta que esté entre las dos primeras
+        const possibleValues = [];
+        for (let i = minCard + 1; i < maxCard; i++) {
+          possibleValues.push(i);
+        }
+        
+        if (possibleValues.length > 0) {
+          const winningValue = possibleValues[Math.floor(Math.random() * possibleValues.length)];
+          // Convertir valor numérico a string
+          const valueKeys = Object.keys(cardValues);
+          const valueString = valueKeys.find(key => cardValues[key] === winningValue);
+          const suit = suits[Math.floor(Math.random() * suits.length)];
+          thirdCard = { value: valueString, suit, numeric: winningValue };
+        } else {
+          thirdCard = dealCard();
+        }
+      } else {
+        thirdCard = dealCard();
+      }
+
       const newCards = [...cards, thirdCard];
       setCards(newCards);
 
@@ -482,8 +814,9 @@ export default function RedDog({ navigation }) {
       let totalBetLost = newBet;
 
       if (
-        card3.numeric > Math.min(card1.numeric, card2.numeric) &&
-        card3.numeric < Math.max(card1.numeric, card2.numeric)
+        autoWin || 
+        (card3.numeric > Math.min(card1.numeric, card2.numeric) &&
+        card3.numeric < Math.max(card1.numeric, card2.numeric))
       ) {
         // Ganó - La tercera carta está entre las dos primeras
         const multiplier = spreadInfo.multiplier;
@@ -506,11 +839,18 @@ export default function RedDog({ navigation }) {
           setCoinsWon(coinReward);
         }
 
-        resultMessage = `¡GANASTE! - ${spreadInfo.message}`;
+        if (autoWin) {
+          resultMessage = `¡GANANCIA SORPRESA! - ${spreadInfo.message}`;
+        } else {
+          resultMessage = `¡GANASTE! - ${spreadInfo.message}`;
+        }
+        
         await playSound("win");
         triggerWinAnimation();
         isWin = true;
         totalBetLost = 0; // No pierde la apuesta si gana
+        // AUMENTAR racha de victorias
+        setWinStreak(prev => prev + 1);
       } else if (
         card3.numeric === card1.numeric ||
         card3.numeric === card2.numeric
@@ -521,6 +861,7 @@ export default function RedDog({ navigation }) {
         resultMessage = `EMPATE - Recuperas tu apuesta de ${newBet} MC`;
         await playSound("click");
         totalBetLost = 0; // Recupera la apuesta
+        // En empate, mantener la racha actual
       } else {
         // Pierde - Tercera carta fuera del rango
         // Ya se restaron las coins al hacer la apuesta, no es necesario restar más
@@ -528,12 +869,22 @@ export default function RedDog({ navigation }) {
         await playSound("lose");
         triggerLoseAnimation();
         // totalBetLost ya tiene el valor de newBet (la apuesta total)
+        // RESET racha de victorias al perder
+        setWinStreak(0);
       }
 
       setResult(resultMessage);
       setGameState("result");
+      setGameInProgress(false); // Terminar el estado de juego en progreso
       animateResult();
       pulseAnimation();
+
+      // Verificar si debemos mostrar el boost de suerte después de una VICTORIA
+      if (isWin) {
+        setTimeout(() => {
+          checkAndShowLuckBoost();
+        }, 1500);
+      }
     }, 300);
   };
 
@@ -548,6 +899,8 @@ export default function RedDog({ navigation }) {
     setShowLoseAnimation(false);
     setTicketsWon(0);
     setCoinsWon(0);
+    setGameInProgress(false); // Asegurar que se reinicie el estado
+    // NO resetear la racha de victorias aquí
     await playSound("click");
   };
 
@@ -608,6 +961,33 @@ export default function RedDog({ navigation }) {
 
       {/* Animación de pérdida */}
       <LoseAnimation show={showLoseAnimation} />
+      
+      <BlockModal
+        visible={showBlockModal}
+        onClose={handleCloseBlockModal}
+      />
+
+      <LuckBoostImage 
+        show={showLuckBoost} 
+        winStreak={winStreak}
+        onHide={handleHideLuckBoost}
+      />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker 
+        isVisible={showTabBlocker} 
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -633,11 +1013,16 @@ export default function RedDog({ navigation }) {
               />
               <Text style={styles.balanceText}>{tickets.toLocaleString()}</Text>
             </View>
+            {/* Indicador de RACHA DE VICTORIAS */}
+            {winStreak > 0 && (
+              <View style={styles.streakIndicator}>
+                <Ionicons name="trophy" size={14} color="#FFD700" />
+                <Text style={styles.streakText}>Racha: {winStreak}</Text>
+              </View>
+            )}
           </View>
 
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}></Text>
-          </View>
+          <View style={styles.emptySpace} />
         </View>
 
         {/* Área de cartas */}
@@ -868,6 +1253,7 @@ const styles = StyleSheet.create({
   balances: {
     flexDirection: "row",
     gap: 12,
+    alignItems: "center",
   },
   balanceItem: {
     flexDirection: "row",
@@ -890,20 +1276,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
+  streakIndicator: {
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.6)", // Verde para victorias
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    gap: 4,
   },
-  title: {
+  streakText: {
     color: "#FFD700",
-    fontSize: 20,
+    fontSize: 11,
     fontWeight: "bold",
-    letterSpacing: 1,
   },
-  backButton: {
-    padding: 8,
+  emptySpace: {
+    width: 70,
   },
   cardsArea: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
@@ -1248,17 +1638,17 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: "50%",
     left: "50%",
-    marginLeft: -100,
-    marginTop: -80,
+    marginLeft: -80,
+    marginTop: -60,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    padding: 25,
-    borderRadius: 20,
-    borderWidth: 4,
-    width: 200,
-    height: 160,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    padding: 20,
+    borderRadius: 15,
+    borderWidth: 3,
+    width: 160,
+    height: 120,
   },
   winAnimation: {
     borderColor: "#FFD700",
@@ -1268,16 +1658,101 @@ const styles = StyleSheet.create({
   },
   winText: {
     color: "#FFD700",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "bold",
-    marginTop: 10,
+    marginTop: 8,
     textAlign: "center",
   },
   loseText: {
     color: "#EF4444",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "bold",
-    marginTop: 10,
+    marginTop: 8,
     textAlign: "center",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,  // 80% del ancho de la pantalla
+    height: height * 0.6, // 60% del alto de la pantalla
+    maxWidth: 400,       // Máximo ancho
+    maxHeight: 400,      // Máximo alto
+  },
+  // Estilos para el sistema de suerte aumentada (solo imagen)
+  luckBoostImageContainer: {
+    position: "absolute",
+    top: "30%",
+    left: "10%",
+    right: "10%",
+    zIndex: 1001,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  luckBoostImageLarge: {
+    width: width * 0.7,  // 70% del ancho de la pantalla
+    height: height * 0.5, // 50% del alto de la pantalla
+    maxWidth: 350,       // Máximo ancho
+    maxHeight: 300,      // Máximo alto
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: '#1a1a1a',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFD700',
+    maxWidth: '80%',
+  },
+  tabBlockerText: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: 'normal',
+    color: '#FFF',
   },
 });

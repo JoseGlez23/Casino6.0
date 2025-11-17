@@ -19,27 +19,111 @@ export const useCoins = () => {
   return context;
 };
 
-// ==== Parámetros de economía (documentados) ====
-// - Coins iniciales: 1000 (se insertan al crear user_coins por 1a vez)
-// - Tickets iniciales: 0
-// - Equivalencia tickets→MXN: 1000 tickets = $10 MXN (se aplica en el RPC)
-
 export const CoinsProvider = ({ children }) => {
   const [manekiCoins, setManekiCoins] = useState(1000);
   const [tickets, setTickets] = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastSync, setLastSync] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   const isInitialized = useRef(false);
   const subscriptionRef = useRef(null);
   const userIdRef = useRef(null);
+  const mountedRef = useRef(true);
 
+  // ===== FUNCIÓN MEJORADA PARA VERIFICAR AUTENTICACIÓN =====
+  const checkAuthStatus = async () => {
+    try {
+      console.log("🔐 Verificando estado de autenticación...");
+      
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (!sessionError && session?.user) {
+        console.log("✅ Sesión activa encontrada:", session.user.id);
+        setIsAuthenticated(true);
+        userIdRef.current = session.user.id;
+        return { user: session.user, error: null };
+      }
+      
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (!userError && user) {
+        console.log("✅ Usuario autenticado encontrado:", user.id);
+        setIsAuthenticated(true);
+        userIdRef.current = user.id;
+        return { user, error: null };
+      }
+      
+      console.log("⚠️ Usuario no autenticado o sesión expirada");
+      setIsAuthenticated(false);
+      userIdRef.current = null;
+      
+      return { user: null, error: sessionError || userError };
+      
+    } catch (error) {
+      console.error("❌ Error verificando autenticación:", error);
+      setIsAuthenticated(false);
+      userIdRef.current = null;
+      return { user: null, error };
+    }
+  };
+
+  // ===== EFECTOS PRINCIPALES MEJORADOS =====
   useEffect(() => {
-    if (isInitialized.current) return;
-    initializeCoinsSystem();
+    mountedRef.current = true;
+    
+    const initializeApp = async () => {
+      if (isInitialized.current || !mountedRef.current) return;
+      
+      try {
+        console.log("🚀 Inicializando aplicación...");
+        setIsLoading(true);
+        
+        const { user, error: authError } = await checkAuthStatus();
+        
+        if (authError) {
+          console.log("⚠️ Error de autenticación, usando modo offline:", authError.message);
+          await loadFromAsyncStorage();
+          if (mountedRef.current) {
+            isInitialized.current = true;
+            setIsLoading(false);
+          }
+          return;
+        }
+        
+        if (user) {
+          console.log("🎯 Usuario autenticado, cargando datos...");
+          await loadInitialData(user.id);
+          await setupRealtimeSubscriptions(user.id);
+          if (mountedRef.current) {
+            isInitialized.current = true;
+          }
+        } else {
+          console.log("🔒 Usuario no autenticado, modo offline");
+          await loadFromAsyncStorage();
+          if (mountedRef.current) {
+            isInitialized.current = true;
+          }
+        }
+        
+      } catch (error) {
+        console.error("❌ Error crítico en inicialización:", error);
+        await loadFromAsyncStorage();
+        if (mountedRef.current) {
+          isInitialized.current = true;
+        }
+      } finally {
+        if (mountedRef.current) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initializeApp();
 
     return () => {
+      mountedRef.current = false;
       if (subscriptionRef.current?.coins)
         subscriptionRef.current.coins.unsubscribe();
       if (subscriptionRef.current?.transactions)
@@ -47,60 +131,126 @@ export const CoinsProvider = ({ children }) => {
     };
   }, []);
 
-  const initializeCoinsSystem = async () => {
-    try {
-      setIsLoading(true);
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        userIdRef.current = user.id;
-        await loadInitialData(user.id);
-        await setupRealtimeSubscriptions(user.id);
-        isInitialized.current = true;
-      } else {
-        await loadFromAsyncStorage();
-        isInitialized.current = true;
+  // ===== LISTENER MEJORADO DE AUTENTICACIÓN =====
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log("🔄 Cambio de estado de autenticación:", event);
+        
+        if (!mountedRef.current) return;
+        
+        try {
+          switch (event) {
+            case 'SIGNED_IN':
+              if (session?.user) {
+                console.log("✅ Usuario inició sesión:", session.user.id);
+                setIsAuthenticated(true);
+                userIdRef.current = session.user.id;
+                await loadInitialData(session.user.id);
+                await setupRealtimeSubscriptions(session.user.id);
+                isInitialized.current = true;
+              }
+              break;
+              
+            case 'SIGNED_OUT':
+              console.log("🚪 Usuario cerró sesión");
+              setIsAuthenticated(false);
+              userIdRef.current = null;
+              isInitialized.current = false;
+              setManekiCoins(1000);
+              setTickets(0);
+              setTransactions([]);
+              await clearAsyncStorage();
+              break;
+              
+            case 'USER_UPDATED':
+              if (session?.user) {
+                console.log("📝 Usuario actualizado, recargando datos...");
+                await refreshCoins();
+              }
+              break;
+              
+            case 'TOKEN_REFRESHED':
+              if (session?.user) {
+                console.log("🔄 Token refrescado");
+              }
+              break;
+              
+            default:
+              console.log("🔍 Evento de auth no manejado:", event);
+          }
+        } catch (error) {
+          console.error("❌ Error en listener de auth:", error);
+        }
       }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ===== FUNCIÓN PARA LIMPIAR ASYNC STORAGE =====
+  const clearAsyncStorage = async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        "manekiCoins",
+        "manekiTickets", 
+        "coinTransactions",
+        "lastSync"
+      ]);
+      console.log("🧹 AsyncStorage limpiado");
     } catch (error) {
-      console.error("❌ Error inicializando sistema:", error);
-      await loadFromAsyncStorage();
-    } finally {
-      setIsLoading(false);
+      console.error("❌ Error limpiando AsyncStorage:", error);
     }
   };
 
+  // ===== SISTEMA UNIFICADO DE CARGA DE DATOS =====
   const loadInitialData = async (userId) => {
     try {
-      const [coinsData, ticketsData, transactionsData] = await Promise.all([
+      console.log("📥 Cargando datos iniciales para usuario:", userId);
+      
+      const [currentCoins, currentTickets, currentTransactions] = await Promise.allSettled([
         loadCoinsFromSupabase(userId),
         loadTicketsFromSupabase(userId),
         loadTransactionsFromSupabase(userId),
       ]);
 
-      setManekiCoins(coinsData);
-      setTickets(ticketsData);
-      setTransactions(transactionsData);
-      setLastSync(new Date().toISOString());
+      // Manejar resultados exitosos o fallidos
+      const coinsData = currentCoins.status === 'fulfilled' ? currentCoins.value : 1000;
+      const ticketsData = currentTickets.status === 'fulfilled' ? currentTickets.value : 0;
+      const transactionsData = currentTransactions.status === 'fulfilled' ? currentTransactions.value : [];
+
+      // Actualizar estado
+      if (mountedRef.current) {
+        setManekiCoins(coinsData);
+        setTickets(ticketsData);
+        setTransactions(transactionsData);
+        setLastSync(new Date().toISOString());
+      }
+      
+      // Guardar en AsyncStorage como respaldo
+      await saveToAsyncStorage(coinsData, ticketsData, transactionsData);
+      
+      console.log(`✅ Datos cargados: Coins=${coinsData}, Tickets=${ticketsData}`);
+      
     } catch (error) {
       console.error("❌ Error cargando datos iniciales:", error);
+      await loadFromAsyncStorage();
       throw error;
     }
   };
 
+  // ✅ ACTUALIZADO: Cargar coins y tickets desde user_coins
   const loadCoinsFromSupabase = async (userId) => {
     try {
       const { data, error } = await supabase
         .from("user_coins")
-        .select("maneki_coins")
+        .select("maneki_coins, tickets")
         .eq("user_id", userId)
         .single();
 
       if (error) {
-        // PGRST116 = no rows
         if (error.code === "PGRST116") {
-          await initializeUserData(userId); // crea registro + bonus
+          await initializeUserData(userId);
           return 1000;
         }
         throw error;
@@ -112,6 +262,7 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
+  // ✅ ACTUALIZADO: Cargar tickets desde user_coins (sistema unificado)
   const loadTicketsFromSupabase = async (userId) => {
     try {
       const { data, error } = await supabase
@@ -121,7 +272,10 @@ export const CoinsProvider = ({ children }) => {
         .single();
 
       if (error) {
-        if (error.code === "PGRST116") return 0;
+        if (error.code === "PGRST116") {
+          await initializeUserData(userId);
+          return 0;
+        }
         throw error;
       }
       return data?.tickets ?? 0;
@@ -131,39 +285,116 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
+  // ✅ ACTUALIZADO: Cargar transacciones de ambas tablas
   const loadTransactionsFromSupabase = async (userId, limit = 50) => {
     try {
-      const { data, error } = await supabase
+      // Cargar transacciones de coins
+      const { data: coinsTransactions, error: coinsError } = await supabase
         .from("transactions")
         .select("*")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(limit);
 
-      if (error) throw error;
+      if (coinsError) throw coinsError;
 
-      return (data ?? []).map((t) => ({
-        id: t.id,
-        amount: t.amount,
-        type: t.type,
-        description: t.description,
-        date: t.created_at,
-        created_at: t.created_at,
-        balance: t.balance_after ?? 0,
-        balance_after: t.balance_after ?? 0,
-        user_dest: t.user_dest,
-        mensaje: t.mensaje ?? null,
-      }));
+      // Cargar transacciones de tickets
+      const { data: ticketsTransactions, error: ticketsError } = await supabase
+        .from("tickets_transactions")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (ticketsError) throw ticketsError;
+
+      // Combinar y ordenar todas las transacciones
+      const allTransactions = [
+        ...(coinsTransactions ?? []).map(t => ({
+          ...t,
+          source: 'coins',
+          id: `coins_${t.id}`
+        })),
+        ...(ticketsTransactions ?? []).map(t => ({
+          ...t,
+          source: 'tickets',
+          id: `tickets_${t.id}`
+        }))
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+       .slice(0, limit);
+
+      return allTransactions;
     } catch (error) {
       console.error("❌ Error cargando transacciones:", error);
       return [];
     }
   };
 
-  // Crea user_coins inicial (1000 coins / 0 tickets) + registra bonus_inicial
+  // ===== SISTEMA DE RESPALDO LOCAL MEJORADO =====
+  const saveToAsyncStorage = async (coins, tickets, transactions) => {
+    try {
+      await Promise.all([
+        AsyncStorage.setItem("manekiCoins", coins.toString()),
+        AsyncStorage.setItem("manekiTickets", tickets.toString()),
+        AsyncStorage.setItem("coinTransactions", JSON.stringify(transactions)),
+        AsyncStorage.setItem("lastSync", new Date().toISOString()),
+      ]);
+      console.log("💾 Datos guardados en respaldo local");
+    } catch (error) {
+      console.error("❌ Error guardando en respaldo local:", error);
+    }
+  };
+
+  const loadFromAsyncStorage = async () => {
+    try {
+      console.log("📤 Cargando desde respaldo local...");
+      
+      const [savedCoins, savedTickets, savedTransactions, lastSaved] = await Promise.all([
+        AsyncStorage.getItem("manekiCoins"),
+        AsyncStorage.getItem("manekiTickets"),
+        AsyncStorage.getItem("coinTransactions"),
+        AsyncStorage.getItem("lastSync"),
+      ]);
+
+      if (mountedRef.current) {
+        if (savedCoins) {
+          const coins = parseInt(savedCoins);
+          setManekiCoins(coins);
+          console.log("✅ Coins cargados desde respaldo:", coins);
+        } else {
+          setManekiCoins(1000);
+        }
+        
+        if (savedTickets) {
+          const ticketsValue = parseInt(savedTickets);
+          setTickets(ticketsValue);
+          console.log("✅ Tickets cargados desde respaldo:", ticketsValue);
+        } else {
+          setTickets(0);
+        }
+        
+        if (savedTransactions) {
+          setTransactions(JSON.parse(savedTransactions));
+        }
+        
+        if (lastSaved) {
+          setLastSync(lastSaved);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error cargando AsyncStorage:", error);
+      if (mountedRef.current) {
+        setManekiCoins(1000);
+        setTickets(0);
+        setTransactions([]);
+      }
+    }
+  };
+
+  // ===== INICIALIZACIÓN DE USUARIO (ACTUALIZADA) =====
   const initializeUserData = async (userId) => {
     try {
-      // 1) Crear registro base
+      // ✅ ACTUALIZADO: Solo una tabla para user_coins
       const { error: upsertErr } = await supabase.from("user_coins").upsert(
         {
           user_id: userId,
@@ -175,7 +406,7 @@ export const CoinsProvider = ({ children }) => {
       );
       if (upsertErr) throw upsertErr;
 
-      // 2) Registrar transacción inicial (bonus)
+      // Registrar transacción inicial (bonus)
       const { error: txErr } = await supabase.from("transactions").insert({
         user_id: userId,
         type: "bonus_inicial",
@@ -192,6 +423,199 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
+  // ===== SISTEMA DE SUSCRIPCIONES EN TIEMPO REAL (ACTUALIZADO) =====
+  const setupRealtimeSubscriptions = async (userId) => {
+    try {
+      // Cancelar suscripciones existentes
+      if (subscriptionRef.current?.coins) subscriptionRef.current.coins.unsubscribe();
+      if (subscriptionRef.current?.transactions) subscriptionRef.current.transactions.unsubscribe();
+
+      // ✅ ACTUALIZADO: Una sola suscripción para user_coins (coins y tickets)
+      const coinsSubscription = supabase
+        .channel("user-coins-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "user_coins",
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (payload.new && mountedRef.current) {
+              if (payload.new.maneki_coins !== undefined) {
+                setManekiCoins(payload.new.maneki_coins);
+              }
+              if (payload.new.tickets !== undefined) {
+                setTickets(payload.new.tickets);
+              }
+              saveToAsyncStorage(
+                payload.new.maneki_coins ?? manekiCoins,
+                payload.new.tickets ?? tickets,
+                transactions
+              );
+            }
+          }
+        )
+        .subscribe();
+
+      // Suscripción para transacciones combinadas
+      const transactionsSubscription = supabase
+        .channel("transactions-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "transactions",
+            filter: `user_id=eq.${userId}`,
+          },
+          async () => {
+            if (mountedRef.current) {
+              const newTx = await loadTransactionsFromSupabase(userId);
+              setTransactions(newTx);
+            }
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "tickets_transactions",
+            filter: `user_id=eq.${userId}`,
+          },
+          async () => {
+            if (mountedRef.current) {
+              const newTx = await loadTransactionsFromSupabase(userId);
+              setTransactions(newTx);
+            }
+          }
+        )
+        .subscribe();
+
+      subscriptionRef.current = {
+        coins: coinsSubscription,
+        transactions: transactionsSubscription,
+      };
+      
+      console.log("✅ Suscripciones realtime configuradas");
+    } catch (error) {
+      console.error("❌ Error suscripciones realtime:", error);
+    }
+  };
+
+  // ===== API PRINCIPAL MEJORADA =====
+  const refreshCoins = async () => {
+    try {
+      const { user } = await checkAuthStatus();
+
+      if (user) {
+        const [currentCoins, currentTickets, currentTransactions] =
+          await Promise.all([
+            loadCoinsFromSupabase(user.id),
+            loadTicketsFromSupabase(user.id),
+            loadTransactionsFromSupabase(user.id),
+          ]);
+
+        console.log(`🔄 Refresh: Coins=${currentCoins}, Tickets=${currentTickets}`);
+
+        if (mountedRef.current) {
+          setManekiCoins(currentCoins);
+          setTickets(currentTickets);
+          setTransactions(currentTransactions);
+          setLastSync(new Date().toISOString());
+        }
+        
+        await saveToAsyncStorage(currentCoins, currentTickets, currentTransactions);
+      }
+    } catch (error) {
+      console.error("❌ Error refrescando datos:", error);
+      throw error;
+    }
+  };
+
+  // ===== FUNCIONES DE TICKETS MEJORADAS =====
+  const addTickets = async (amount, description = "Ganancia en juego") => {
+    try {
+      const { user } = await checkAuthStatus();
+      if (!user) throw new Error("Usuario no autenticado");
+
+      console.log(`🎯 Agregando ${amount} tickets para usuario: ${user.id}`);
+
+      // ✅ ACTUALIZADO: Usar la función RPC unificada
+      const { data: result, error } = await supabase.rpc('agregar_tickets', {
+        p_user_id: user.id,
+        p_cantidad: amount,
+        p_descripcion: description
+      });
+
+      if (error) {
+        console.error("❌ Error RPC agregar_tickets:", error);
+        throw error;
+      }
+
+      if (mountedRef.current) {
+        setTickets(result.nuevo_balance);
+      }
+
+      await saveToAsyncStorage(manekiCoins, result.nuevo_balance, transactions);
+
+      console.log(`✅ Tickets agregados: ${amount}. Nuevo total: ${result.nuevo_balance}`);
+      return result.nuevo_balance;
+    } catch (error) {
+      console.error("❌ Error agregando tickets:", error);
+      await refreshCoins();
+      throw error;
+    }
+  };
+
+  // ✅ ACTUALIZADO: Retirar tickets con función RPC unificada
+  const solicitarRetiroTickets = async (ticketAmount) => {
+    try {
+      if (!ticketAmount || ticketAmount <= 0)
+        throw new Error("Ingresa una cantidad válida de tickets");
+
+      const { user } = await checkAuthStatus();
+      if (!user) throw new Error("Usuario no autenticado");
+
+      console.log(`🎫 Solicitando retiro de ${ticketAmount} tickets para usuario: ${user.id}`);
+
+      // ✅ ACTUALIZADO: Usar función RPC unificada
+      const { data: result, error } = await supabase.rpc(
+        "retirar_tickets",
+        {
+          usuario_id: user.id,
+          tickets_retirar: ticketAmount
+        }
+      );
+
+      if (error) {
+        console.error("❌ Error RPC retirar_tickets:", error);
+        throw error;
+      }
+
+      if (!result?.exito) {
+        throw new Error(result?.error || "No se pudo procesar el retiro");
+      }
+
+      // Actualizar estado local
+      if (mountedRef.current) {
+        setTickets(result.tickets_restantes);
+      }
+
+      await saveToAsyncStorage(manekiCoins, result.tickets_restantes, transactions);
+
+      console.log(`✅ Retiro exitoso. Tickets restantes: ${result.tickets_restantes}`);
+      return result;
+    } catch (error) {
+      console.error("❌ Error solicitando retiro de tickets:", error);
+      await refreshCoins();
+      throw error;
+    }
+  };
+
+  // ===== FUNCIONES EXISTENTES (MANTENIDAS) =====
   const updateUserDataInDatabase = async (userId, newCoins, newTickets) => {
     try {
       const { error } = await supabase.from("user_coins").upsert(
@@ -204,6 +628,9 @@ export const CoinsProvider = ({ children }) => {
         { onConflict: "user_id" }
       );
       if (error) throw error;
+      
+      await saveToAsyncStorage(newCoins, newTickets, transactions);
+      
       return true;
     } catch (error) {
       console.error("❌ Error actualizando base:", error);
@@ -211,117 +638,18 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
-  const setupRealtimeSubscriptions = async (userId) => {
-    try {
-      const coinsSubscription = supabase
-        .channel("coins-changes")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "user_coins",
-            filter: `user_id=eq.${userId}`,
-          },
-          (payload) => {
-            if (payload.new) {
-              if (payload.new.maneki_coins !== undefined)
-                setManekiCoins(payload.new.maneki_coins);
-              if (payload.new.tickets !== undefined)
-                setTickets(payload.new.tickets);
-            }
-          }
-        )
-        .subscribe();
-
-      const transactionsSubscription = supabase
-        .channel("transactions-changes")
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "transactions",
-            filter: `user_id=eq.${userId}`,
-          },
-          async () => {
-            const newTx = await loadTransactionsFromSupabase(userId);
-            setTransactions(newTx);
-          }
-        )
-        .subscribe();
-
-      subscriptionRef.current = {
-        coins: coinsSubscription,
-        transactions: transactionsSubscription,
-      };
-    } catch (error) {
-      console.error("❌ Error suscripciones realtime:", error);
-    }
-  };
-
-  const loadFromAsyncStorage = async () => {
-    try {
-      const [savedCoins, savedTickets, savedTransactions] = await Promise.all([
-        AsyncStorage.getItem("manekiCoins"),
-        AsyncStorage.getItem("manekiTickets"),
-        AsyncStorage.getItem("coinTransactions"),
-      ]);
-
-      if (savedCoins) setManekiCoins(parseInt(savedCoins));
-      if (savedTickets) setTickets(parseInt(savedTickets));
-      if (savedTransactions) setTransactions(JSON.parse(savedTransactions));
-    } catch (error) {
-      console.error("❌ Error cargando AsyncStorage:", error);
-    }
-  };
-
-  // ===== API PRINCIPAL =====
-
-  const refreshCoins = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        // Cargar TODO en paralelo para consistencia
-        const [currentCoins, currentTickets, currentTransactions] =
-          await Promise.all([
-            loadCoinsFromSupabase(user.id),
-            loadTicketsFromSupabase(user.id),
-            loadTransactionsFromSupabase(user.id),
-          ]);
-
-        console.log(
-          `🔄 Refresh: Coins=${currentCoins}, Tickets=${currentTickets}`
-        );
-
-        // Actualizar estado de forma atómica
-        setManekiCoins(currentCoins);
-        setTickets(currentTickets);
-        setTransactions(currentTransactions);
-        setLastSync(new Date().toISOString());
-      }
-    } catch (error) {
-      console.error("❌ Error refrescando datos:", error);
-      throw error;
-    }
-  };
-
-  // Agregar coins (compras / premios / bonos)
   const addCoins = async (amount, description = "Compra de monedas") => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { user } = await checkAuthStatus();
       if (!user) throw new Error("Usuario no autenticado");
 
       const newBalance = manekiCoins + amount;
-      setManekiCoins(newBalance);
+      if (mountedRef.current) {
+        setManekiCoins(newBalance);
+      }
+      
       await updateUserDataInDatabase(user.id, newBalance, tickets);
 
-      // Determinar tipo
       const lower = (description || "").toLowerCase();
       const txType = lower.includes("compra")
         ? "compra_coins"
@@ -345,18 +673,18 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
-  // Restar coins (apuestas)
   const subtractCoins = async (amount, description = "Apuesta en juego") => {
     try {
       if (manekiCoins < amount) throw new Error("Fondos insuficientes");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { user } = await checkAuthStatus();
       if (!user) throw new Error("Usuario no autenticado");
 
       const newBalance = manekiCoins - amount;
-      setManekiCoins(newBalance);
+      if (mountedRef.current) {
+        setManekiCoins(newBalance);
+      }
+      
       await updateUserDataInDatabase(user.id, newBalance, tickets);
 
       const { error: txErr } = await supabase.from("transactions").insert({
@@ -377,106 +705,6 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
-  // Agregar tickets (premios de juego)
-  const addTickets = async (amount, description = "Ganancia en juego") => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Usuario no autenticado");
-
-      const newTickets = tickets + amount;
-      setTickets(newTickets);
-      await updateUserDataInDatabase(user.id, manekiCoins, newTickets);
-
-      // Registrar en ledger (tickets)
-      const { error: txErr } = await supabase.from("transactions").insert({
-        user_id: user.id,
-        type: "ganancia_tickets",
-        amount: amount,
-        description,
-        // balance_after aquí lo usamos para mostrar saldo de tickets en UI cuando filtres por 'tickets'
-        balance_after: newTickets,
-        created_at: new Date().toISOString(),
-      });
-      if (txErr) throw txErr;
-
-      return newTickets;
-    } catch (error) {
-      console.error("❌ Error agregando tickets:", error);
-      await refreshCoins();
-      throw error;
-    }
-  };
-
-  // SOLUCIÓN CORREGIDA: Solicitar retiro de tickets
-  const solicitarRetiroTickets = async (ticketAmount) => {
-    try {
-      if (!ticketAmount || ticketAmount <= 0)
-        throw new Error("Ingresa una cantidad válida de tickets");
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Usuario no autenticado");
-
-      // 1. VERIFICACIÓN EN TIEMPO REAL - Cargar tickets actuales desde BD
-      const currentTicketsFromDB = await loadTicketsFromSupabase(user.id);
-      console.log(
-        `🎫 Tickets en BD: ${currentTicketsFromDB}, Solicitados: ${ticketAmount}`
-      );
-
-      if (ticketAmount > currentTicketsFromDB)
-        throw new Error(
-          `No tienes suficientes tickets. Disponibles: ${currentTicketsFromDB}`
-        );
-
-      // 2. Sincronizar estado local con BD antes de proceder
-      setTickets(currentTicketsFromDB);
-
-      // 3. Llamar al RPC
-      const { data: result, error: rpcErr } = await supabase.rpc(
-        "solicitar_retiro_tickets",
-        {
-          usuario_id: user.id,
-          tickets_retirar: ticketAmount,
-        }
-      );
-
-      if (rpcErr) throw rpcErr;
-      if (!result?.exito)
-        throw new Error(result?.error || "No se pudo procesar el retiro");
-
-      // 4. Actualizar estado local con el valor devuelto por el RPC
-      const nuevosTickets =
-        result.tickets_restantes ?? currentTicketsFromDB - ticketAmount;
-      setTickets(nuevosTickets);
-
-      // 5. Registrar transacción
-      const { error: txErr } = await supabase.from("transactions").insert({
-        user_id: user.id,
-        type: "retiro_tickets",
-        amount: -ticketAmount,
-        description: `Retiro de tickets (${ticketAmount})`,
-        balance_after: nuevosTickets,
-        created_at: new Date().toISOString(),
-      });
-      if (txErr) throw txErr;
-
-      // 6. Forzar refresh completo para asegurar consistencia
-      await refreshCoins();
-
-      console.log(`✅ Retiro exitoso. Tickets restantes: ${nuevosTickets}`);
-      return result;
-    } catch (error) {
-      console.error("❌ Error solicitando retiro de tickets:", error);
-      // Forzar sync en caso de error
-      await refreshCoins();
-      throw error;
-    }
-  };
-
-  // Transferencias entre usuarios (RPC existente con mensaje)
   const transferCoins = async (
     amount,
     recipientIdentifier,
@@ -491,9 +719,7 @@ export const CoinsProvider = ({ children }) => {
         throw new Error("El monto mínimo de transferencia es 10 monedas");
       if (amount > manekiCoins) throw new Error("Fondos insuficientes");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { user } = await checkAuthStatus();
       if (!user) throw new Error("Usuario no autenticado");
 
       const { data: result, error: transferError } = await supabase.rpc(
@@ -510,7 +736,10 @@ export const CoinsProvider = ({ children }) => {
       if (!result?.exito)
         throw new Error(result?.error || "Transferencia rechazada");
 
-      setManekiCoins(result.nuevo_saldo);
+      if (mountedRef.current) {
+        setManekiCoins(result.nuevo_saldo);
+      }
+      
       await refreshCoins();
 
       return {
@@ -528,11 +757,24 @@ export const CoinsProvider = ({ children }) => {
     }
   };
 
-  // Función para debuggear estado actual
+  // ===== FUNCIONES AUXILIARES =====
+  const getTransactionHistory = (limit = 50) => transactions.slice(0, limit);
+  const canAfford = (amount) => manekiCoins >= amount;
+
+  const getDailyBonus = async () => {
+    return await addCoins(1000, "Bono diario");
+  };
+
+  const resetCoins = async () => {
+    const { user } = await checkAuthStatus();
+    if (user) {
+      await initializeUserData(user.id);
+      await refreshCoins();
+    }
+  };
+
   const debugState = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { user } = await checkAuthStatus();
 
     if (user) {
       const dbCoins = await loadCoinsFromSupabase(user.id);
@@ -543,25 +785,16 @@ export const CoinsProvider = ({ children }) => {
       console.log(
         `🔍 DEBUG - Estado BD: Coins=${dbCoins}, Tickets=${dbTickets}, User: ${user.id}`
       );
+      console.log(
+        `🔍 DEBUG - Autenticado: ${isAuthenticated}, Inicializado: ${isInitialized.current}`
+      );
     }
   };
 
-  const getTransactionHistory = (limit = 50) => transactions.slice(0, limit);
-  const canAfford = (amount) => manekiCoins >= amount;
-
-  // Bono diario (usa ledger de coins como ganancia_coins si no es compra)
-  const getDailyBonus = async () => {
-    return await addCoins(1000, "Bono diario");
-  };
-
-  const resetCoins = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      await initializeUserData(user.id);
-      await refreshCoins();
-    }
+  const forceRefresh = async () => {
+    console.log("🔄 Forzando recarga de datos...");
+    isInitialized.current = false;
+    await refreshCoins();
   };
 
   const value = {
@@ -570,6 +803,7 @@ export const CoinsProvider = ({ children }) => {
     transactions,
     isLoading,
     lastSync,
+    isAuthenticated,
     addCoins,
     subtractCoins,
     addTickets,
@@ -580,7 +814,8 @@ export const CoinsProvider = ({ children }) => {
     getTransactionHistory,
     canAfford,
     getDailyBonus,
-    debugState, // Agregada para debugging
+    debugState,
+    forceRefresh,
   };
 
   return (

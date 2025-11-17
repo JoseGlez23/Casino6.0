@@ -14,6 +14,7 @@ import {
   Image,
   ActivityIndicator,
   Animated,
+  BackHandler,
 } from "react-native";
 import { Video } from "expo-av";
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -24,8 +25,16 @@ const { width, height } = Dimensions.get("window");
 
 // Dominios de email válidos
 const dominiosValidos = [
-  'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com',
-  'protonmail.com', 'aol.com', 'live.com', 'msn.com', 'yandex.com'
+  "gmail.com",
+  "hotmail.com",
+  "outlook.com",
+  "yahoo.com",
+  "icloud.com",
+  "protonmail.com",
+  "aol.com",
+  "live.com",
+  "msn.com",
+  "yandex.com",
 ];
 
 export default function LoginScreen({ navigation }) {
@@ -40,17 +49,29 @@ export default function LoginScreen({ navigation }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
 
+  // Prevenir retroceso en Android
+  React.useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        return true; // Previene la acción por defecto (salir de la app)
+      }
+    );
+
+    return () => backHandler.remove();
+  }, []);
+
   const validarEmail = (email) => {
     const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!regex.test(email)) {
       return "Formato de email inválido";
     }
-    
-    const dominio = email.split('@')[1].toLowerCase();
+
+    const dominio = email.split("@")[1].toLowerCase();
     if (!dominiosValidos.includes(dominio)) {
-      return `Dominio no válido. Usa: ${dominiosValidos.join(', ')}`;
+      return `Dominio no válido. Usa: ${dominiosValidos.join(", ")}`;
     }
-    
+
     return null;
   };
 
@@ -71,6 +92,7 @@ export default function LoginScreen({ navigation }) {
 
     // Esperar 1.5 segundos mostrando la animación y luego navegar
     setTimeout(() => {
+      setLoginSuccess(false);
       navigation.navigate("Main");
     }, 1500);
   };
@@ -98,7 +120,6 @@ export default function LoginScreen({ navigation }) {
       // En lugar del alert, activamos la animación de éxito
       setLoginSuccess(true);
       startSuccessAnimation();
-
     } catch (e) {
       setLoading(false);
       showAlert(e.message);
@@ -135,15 +156,14 @@ export default function LoginScreen({ navigation }) {
       {/* Overlay más claro para ver mejor el video */}
       <View style={styles.overlay} />
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoid}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
         >
-          
           {/* Encabezado japonés con brillo - Reducido */}
           <View style={styles.headerContainer}>
             <View style={styles.titleGlow}>
@@ -190,7 +210,11 @@ export default function LoginScreen({ navigation }) {
             {/* Contraseña */}
             <View style={styles.inputGlowContainer}>
               <View style={styles.inputContainer}>
-                <Ionicons name="lock-closed-outline" size={20} color="#FF6B6B" />
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={20}
+                  color="#FF6B6B"
+                />
                 <TextInput
                   style={styles.input}
                   placeholder="Contraseña"
@@ -234,9 +258,7 @@ export default function LoginScreen({ navigation }) {
             >
               <View style={styles.biometricButton}>
                 <Ionicons name="finger-print" size={22} color="#FF6B6B" />
-                <Text style={styles.biometricButtonText}>
-                  Huella Digital
-                </Text>
+                <Text style={styles.biometricButtonText}>Huella Digital</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -244,14 +266,16 @@ export default function LoginScreen({ navigation }) {
           {/* Enlace a registro */}
           <View style={styles.footerContainer}>
             <View style={styles.registerGlow}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => navigation.navigate("Register")}
                 disabled={loginSuccess}
               >
-                <Text style={[
-                  styles.registerLink,
-                  loginSuccess && styles.disabledLink
-                ]}>
+                <Text
+                  style={[
+                    styles.registerLink,
+                    loginSuccess && styles.disabledLink,
+                  ]}
+                >
                   ¿No tienes cuenta? Regístrate aquí
                 </Text>
               </TouchableOpacity>
@@ -260,24 +284,53 @@ export default function LoginScreen({ navigation }) {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Overlay de éxito de login */}
+      {/* Overlay de éxito de login - Estilo Mejorado */}
       {loginSuccess && (
-        <Animated.View 
+        <Animated.View
           style={[
             styles.successOverlay,
             {
               opacity: fadeAnim,
-              transform: [{ scale: scaleAnim }]
-            }
+              transform: [{ scale: scaleAnim }],
+            },
           ]}
         >
           <View style={styles.successContainer}>
-            <View style={styles.successIconContainer}>
-              <Ionicons name="checkmark-circle" size={80} color="#4CAF50" />
+            {/* Header estilo HomeScreen */}
+            <View style={styles.successHeader}>
+              <View style={styles.successTitleContainer}>
+                <Text style={styles.successJapaneseTitle}>招きカジノ</Text>
+                <Text style={styles.successEnglishTitle}>MANEKI CASINO</Text>
+              </View>
             </View>
-            <Text style={styles.successTitle}>¡Inicio de Sesión Exitoso!</Text>
-            <Text style={styles.successSubtitle}>Redirigiendo al casino...</Text>
-            <ActivityIndicator size="large" color="#FFD700" style={styles.successSpinner} />
+
+            {/* Contenido principal */}
+            <View style={styles.successContent}>
+              <View style={styles.successIconContainer}>
+                <Ionicons name="checkmark-circle" size={80} color="#FFD700" />
+              </View>
+              <Text style={styles.successTitle}>
+                ¡INICIO DE SESIÓN EXITOSO!
+              </Text>
+              <Text style={styles.successSubtitle}>
+                Redirigiendo al casino...
+              </Text>
+
+              {/* Stats como en HomeScreen */}
+              <View style={styles.successStats}>
+                <View style={styles.successStatCard}>
+                  <Ionicons name="diamond" size={24} color="#FFD700" />
+                  <Text style={styles.successStatNumber}>BIENVENIDO</Text>
+                  <Text style={styles.successStatLabel}>JUGADOR</Text>
+                </View>
+              </View>
+
+              <ActivityIndicator
+                size="large"
+                color="#FFD700"
+                style={styles.successSpinner}
+              />
+            </View>
           </View>
         </Animated.View>
       )}
@@ -301,19 +354,20 @@ export default function LoginScreen({ navigation }) {
   );
 }
 
+// Los estilos se mantienen igual...
 const styles = StyleSheet.create({
-  background: { 
+  background: {
     flex: 1,
-    backgroundColor: "#000000"
+    backgroundColor: "#000000",
   },
   keyboardAvoid: {
     flex: 1,
   },
   videoBackground: {
     position: "absolute",
-    top: 0, 
-    left: 0, 
-    right: 0, 
+    top: 0,
+    left: 0,
+    right: 0,
     bottom: 0,
   },
   overlay: {
@@ -345,7 +399,7 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: "bold",
     color: "#FF0000",
-    fontFamily: Platform.OS === 'ios' ? 'Hiragino Mincho ProN' : 'serif',
+    fontFamily: Platform.OS === "ios" ? "Hiragino Mincho ProN" : "serif",
     textShadowColor: "#FF6B6B",
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 10,
@@ -509,47 +563,107 @@ const styles = StyleSheet.create({
   disabledLink: {
     opacity: 0.5,
   },
-  // Estilos para el overlay de éxito
+  // Estilos para el overlay de éxito - MEJORADO
   successOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    backgroundColor: "rgba(15, 15, 15, 0.95)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,
   },
   successContainer: {
-    backgroundColor: "rgba(26, 26, 26, 0.95)",
-    padding: 30,
+    backgroundColor: "#0F0F0F",
+    width: "90%",
     borderRadius: 20,
-    alignItems: "center",
+    overflow: "hidden",
     borderWidth: 3,
-    borderColor: "#4CAF50",
-    maxWidth: width * 0.8,
-    shadowColor: "#4CAF50",
+    borderColor: "#FFD700",
+    shadowColor: "#FFD700",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.7,
     shadowRadius: 20,
-    elevation: 10,
+    elevation: 15,
+  },
+  successHeader: {
+    backgroundColor: "#8B0000",
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === "ios" ? 50 : 40,
+    paddingBottom: 15,
+    borderBottomWidth: 3,
+    borderBottomColor: "#FFD700",
+  },
+  successTitleContainer: {
+    alignItems: "center",
+  },
+  successJapaneseTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#FFD700",
+    fontFamily: Platform.OS === "ios" ? "Hiragino Mincho ProN" : "serif",
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  successEnglishTitle: {
+    fontSize: 14,
+    color: "#FFF",
+    fontWeight: "300",
+    letterSpacing: 2,
+    marginTop: 2,
+  },
+  successContent: {
+    padding: 30,
+    alignItems: "center",
   },
   successIconContainer: {
     marginBottom: 20,
   },
   successTitle: {
-    color: "#4CAF50",
+    color: "#FFD700",
     fontSize: 22,
     fontWeight: "bold",
     textAlign: "center",
     marginBottom: 10,
+    letterSpacing: 1,
   },
   successSubtitle: {
-    color: "#FFD700",
+    color: "#FFF",
     fontSize: 16,
     textAlign: "center",
-    marginBottom: 20,
+    marginBottom: 25,
+    opacity: 0.8,
+  },
+  successStats: {
+    flexDirection: "row",
+    marginBottom: 25,
+    width: "100%",
+    justifyContent: "center",
+  },
+  successStatCard: {
+    backgroundColor: "#1a1a1a",
+    padding: 20,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#333",
+    minWidth: 150,
+  },
+  successStatNumber: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  successStatLabel: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "500",
+    textAlign: "center",
   },
   successSpinner: {
     marginTop: 10,

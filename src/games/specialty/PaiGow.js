@@ -1,5 +1,5 @@
 // src/games/specialty/PaiGow.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
   SafeAreaView,
   Vibration,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
@@ -20,9 +22,109 @@ import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos unificado
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        // Animación de salida
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 0.8,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 100,
+            duration: 500,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          onClose();
+        });
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlayTransparent}>
+        <Animated.View 
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+};
+
+// Hook de sonidos mejorado
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const loadSounds = async () => {
     try {
@@ -44,6 +146,7 @@ const useGameSounds = () => {
         { key: "coin", file: require("../../assets/sounds/coin.mp3") },
         { key: "error", file: require("../../assets/sounds/error.mp3") },
         { key: "success", file: require("../../assets/sounds/success.mp3") },
+        { key: "shuffle", file: require("../../assets/sounds/shuffle.mp3") },
       ];
 
       for (const { key, file } of soundTypes) {
@@ -63,6 +166,8 @@ const useGameSounds = () => {
   };
 
   const playSound = async (type) => {
+    if (!soundEnabled) return;
+    
     try {
       let soundKey;
       switch (type) {
@@ -74,6 +179,9 @@ const useGameSounds = () => {
           break;
         case "card":
           soundKey = "card";
+          break;
+        case "shuffle":
+          soundKey = "shuffle";
           break;
         case "chip":
         case "coin":
@@ -105,6 +213,9 @@ const useGameSounds = () => {
       case "card":
         Vibration.vibrate(30);
         break;
+      case "shuffle":
+        Vibration.vibrate([0, 50, 20, 50]);
+        break;
       case "chip":
       case "coin":
         Vibration.vibrate(20);
@@ -114,6 +225,8 @@ const useGameSounds = () => {
         Vibration.vibrate(15);
     }
   };
+
+  const toggleSound = () => setSoundEnabled(!soundEnabled);
 
   useEffect(() => {
     loadSounds();
@@ -127,33 +240,43 @@ const useGameSounds = () => {
     };
   }, []);
 
-  return playSound;
+  return { playSound, soundEnabled, toggleSound };
 };
 
-// Componente de animación de victoria
-const WinAnimation = ({ show }) => {
+// Componente de animación de victoria mejorado
+const WinAnimation = ({ show, ticketsWon }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [confettiAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (show) {
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }).start();
+      // Animación principal
+      Animated.sequence([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(confettiAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        })
+      ]).start();
 
+      // Animación de pulso continua
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 500,
+            toValue: 1.1,
+            duration: 800,
             useNativeDriver: true,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 500,
+            duration: 800,
             useNativeDriver: true,
           }),
         ])
@@ -161,6 +284,7 @@ const WinAnimation = ({ show }) => {
     } else {
       scaleAnim.setValue(0);
       pulseAnim.setValue(1);
+      confettiAnim.setValue(0);
     }
   }, [show]);
 
@@ -172,17 +296,29 @@ const WinAnimation = ({ show }) => {
         styles.animationContainer,
         styles.winAnimation,
         {
-          transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
+          transform: [{ scale: scaleAnim }],
         },
       ]}
     >
-      <Ionicons name="trophy" size={80} color="#FFD700" />
+      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+        <Ionicons name="trophy" size={80} color="#FFD700" />
+      </Animated.View>
       <Text style={styles.winText}>¡MANO VÁLIDA!</Text>
+      {ticketsWon > 0 && (
+        <Animated.Text 
+          style={[
+            styles.ticketsWonAnimation,
+            { opacity: confettiAnim }
+          ]}
+        >
+          +{ticketsWon} Tickets
+        </Animated.Text>
+      )}
     </Animated.View>
   );
 };
 
-// Componente de animación de pérdida
+// Componente de animación de pérdida mejorado
 const LoseAnimation = ({ show }) => {
   const [scaleAnim] = useState(new Animated.Value(0));
   const [shakeAnim] = useState(new Animated.Value(0));
@@ -196,11 +332,13 @@ const LoseAnimation = ({ show }) => {
           friction: 8,
           useNativeDriver: true,
         }),
-        Animated.timing(shakeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        Animated.sequence([
+          Animated.timing(shakeAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: -1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: -1, duration: 100, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: 0, duration: 100, useNativeDriver: true }),
+        ])
       ]).start();
     } else {
       scaleAnim.setValue(0);
@@ -209,8 +347,8 @@ const LoseAnimation = ({ show }) => {
   }, [show]);
 
   const shakeInterpolation = shakeAnim.interpolate({
-    inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
+    inputRange: [-1, 0, 1],
+    outputRange: [-10, 0, 10],
   });
 
   if (!show) return null;
@@ -221,14 +359,107 @@ const LoseAnimation = ({ show }) => {
         styles.animationContainer,
         styles.loseAnimation,
         {
-          transform: [{ scale: scaleAnim }, { translateX: shakeInterpolation }],
+          transform: [
+            { scale: scaleAnim }, 
+            { translateX: shakeInterpolation }
+          ],
         },
       ]}
     >
-      <Ionicons name="sad-outline" size={80} color="#EF4444" />
+      <Ionicons name="close-circle" size={80} color="#EF4444" />
       <Text style={styles.loseText}>MANO NO VÁLIDA</Text>
     </Animated.View>
   );
+};
+
+// Componente de animación de reparto de cartas
+const CardDealAnimation = ({ cards, onComplete }) => {
+  const [animatedCards, setAnimatedCards] = useState([]);
+
+  useEffect(() => {
+    if (cards.length === 0) return;
+
+    // Inicializar animaciones para cada carta
+    const cardAnimations = cards.map((_, index) => new Animated.Value(0));
+    setAnimatedCards(cardAnimations);
+
+    // Animar cartas en secuencia
+    const animations = cardAnimations.map((anim, index) =>
+      Animated.sequence([
+        Animated.delay(index * 150),
+        Animated.spring(anim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        })
+      ])
+    );
+
+    Animated.stagger(100, animations).start(() => {
+      if (onComplete) onComplete();
+    });
+  }, [cards]);
+
+  if (cards.length === 0 || animatedCards.length === 0) return null;
+
+  return (
+    <View style={styles.cardsContainer}>
+      {cards.map((card, index) => {
+        const cardAnimation = animatedCards[index];
+        
+        if (!cardAnimation) return null;
+
+        const animatedStyle = {
+          transform: [
+            {
+              translateY: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-100, 0],
+              }),
+            },
+            {
+              scale: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.5, 1],
+              }),
+            },
+            {
+              rotate: cardAnimation.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['-10deg', '0deg'],
+              }),
+            }
+          ],
+          opacity: cardAnimation,
+        };
+
+        return (
+          <Animated.View key={index} style={[styles.card, animatedStyle]}>
+            <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
+              {card.value}
+            </Text>
+            <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
+              {card.suit}
+            </Text>
+            <View style={styles.cardCorner}>
+              <Text style={[styles.cardCornerValue, { color: getCardColor(card.suit) }]}>
+                {card.value}
+              </Text>
+              <Text style={[styles.cardCornerSuit, { color: getCardColor(card.suit) }]}>
+                {card.suit}
+              </Text>
+            </View>
+          </Animated.View>
+        );
+      })}
+    </View>
+  );
+};
+
+// Función auxiliar para color de cartas
+const getCardColor = (suit) => {
+  return suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
 };
 
 // Función para calcular tickets según apuesta
@@ -241,10 +472,10 @@ const getTicketRewards = (betAmount, isWin = false) => {
   };
   
   const baseTickets = baseRewards[betAmount] || Math.floor(betAmount * 1.5);
-  return isWin ? baseTickets : Math.floor(baseTickets * 0.3);
+  return isWin ? baseTickets : 0;
 };
 
-// Evaluación de manos para Pai Gow
+// Evaluación de manos para Pai Gow mejorada
 const evaluatePaiGowHand = (hand5, hand2) => {
   // Evaluar mano de 5 cartas
   const values5 = hand5.map(card => card.numeric);
@@ -279,34 +510,43 @@ const getHandRank = (hand) => {
   const values = hand.map(card => card.numeric);
   const suits = hand.map(card => card.suit);
   const valueCounts = getValueCounts(values);
+  const maxCount = Math.max(...Object.values(valueCounts));
   
   if (hand.length === 5) {
     // Evaluación para mano de 5 cartas
-    if (Math.max(...Object.values(valueCounts)) === 4) return 8; // Póker
-    if (Object.values(valueCounts).includes(3) && Object.values(valueCounts).includes(2)) return 7; // Full
-    if (new Set(suits).size === 1) return 6; // Color
-    if (checkStraight(values)) return 5; // Escalera
-    if (Object.values(valueCounts).includes(3)) return 4; // Trío
+    const isFlush = new Set(suits).size === 1;
+    const isStraight = checkStraight(values);
+    
+    if (isFlush && isStraight && Math.max(...values) === 14) return 10; // Escalera real
+    if (isFlush && isStraight) return 9; // Escalera de color
+    if (maxCount === 4) return 8; // Póker
+    if (maxCount === 3 && Object.values(valueCounts).includes(2)) return 7; // Full
+    if (isFlush) return 6; // Color
+    if (isStraight) return 5; // Escalera
+    if (maxCount === 3) return 4; // Trío
     if (Object.values(valueCounts).filter(count => count === 2).length === 2) return 3; // Doble pareja
-    if (Object.values(valueCounts).includes(2)) return 2; // Pareja
+    if (maxCount === 2) return 2; // Pareja
     return 1; // Carta alta
   } else {
     // Evaluación para mano de 2 cartas
-    if (Object.values(valueCounts).includes(2)) return 2; // Pareja
+    if (maxCount === 2) return 2; // Pareja
     return 1; // Carta alta
   }
 };
 
 const checkStraight = (values) => {
-  const sorted = [...new Set(values)].sort((a, b) => a - b);
-  if (sorted.length < 5) return false;
+  const uniqueValues = [...new Set(values)].sort((a, b) => a - b);
   
-  for (let i = 0; i <= sorted.length - 5; i++) {
-    if (sorted[i + 4] - sorted[i] === 4) return true;
+  // Verificar escalera normal
+  for (let i = 0; i <= uniqueValues.length - 5; i++) {
+    if (uniqueValues[i + 4] - uniqueValues[i] === 4) return true;
   }
   
-  if (sorted.includes(14) && sorted.includes(2) && sorted.includes(3) && 
-      sorted.includes(4) && sorted.includes(5)) return true;
+  // Verificar escalera baja (A-2-3-4-5)
+  if (uniqueValues.includes(14) && uniqueValues.includes(2) && 
+      uniqueValues.includes(3) && uniqueValues.includes(4) && uniqueValues.includes(5)) {
+    return true;
+  }
   
   return false;
 };
@@ -315,26 +555,103 @@ const checkStraight = (values) => {
 const autoArrangeCards = (cards) => {
   const sortedCards = [...cards].sort((a, b) => b.numeric - a.numeric);
   
-  // Intentar encontrar la mejor combinación
-  let bestHand5 = sortedCards.slice(0, 5);
-  let bestHand2 = sortedCards.slice(5, 7);
-  let bestEvaluation = evaluatePaiGowHand(bestHand5, bestHand2);
+  // Estrategia: intentar crear la mejor mano de 5 posible
+  let bestArrangement = null;
+  let bestScore = -1;
   
-  // Si no es válida, intentar otras combinaciones
-  if (!bestEvaluation.isValid) {
-    // Estrategia simple: mover cartas altas a la mano de 2 si es necesario
-    for (let i = 0; i < 3; i++) {
-      const alternativeHand5 = [...sortedCards.slice(0, 4), sortedCards[6]];
-      const alternativeHand2 = [sortedCards[4], sortedCards[5]];
-      const altEvaluation = evaluatePaiGowHand(alternativeHand5, alternativeHand2);
-      
-      if (altEvaluation.isValid) {
-        return { hand5: alternativeHand5, hand2: alternativeHand2 };
+  // Generar combinaciones posibles
+  const combinations = generateCombinations(sortedCards);
+  
+  for (const combo of combinations) {
+    const hand5 = combo;
+    const hand2 = sortedCards.filter(card => !hand5.includes(card));
+    
+    const evaluation = evaluatePaiGowHand(hand5, hand2);
+    
+    if (evaluation.isValid) {
+      const score = evaluation.hand5Rank * 10 + evaluation.hand2Rank;
+      if (score > bestScore) {
+        bestScore = score;
+        bestArrangement = { hand5, hand2 };
       }
     }
   }
   
-  return { hand5: bestHand5, hand2: bestHand2 };
+  // Si no se encontró combinación válida, usar estrategia por defecto
+  if (!bestArrangement) {
+    // Intentar crear par en mano de 2 moviendo cartas
+    for (let i = 0; i < sortedCards.length - 1; i++) {
+      for (let j = i + 1; j < sortedCards.length; j++) {
+        if (sortedCards[i].numeric === sortedCards[j].numeric) {
+          const hand2 = [sortedCards[i], sortedCards[j]];
+          const hand5 = sortedCards.filter((_, index) => index !== i && index !== j);
+          const evaluation = evaluatePaiGowHand(hand5, hand2);
+          if (evaluation.isValid) {
+            return { hand5, hand2 };
+          }
+        }
+      }
+    }
+    
+    // Último recurso: primeras 5 y últimas 2
+    return { hand5: sortedCards.slice(0, 5), hand2: sortedCards.slice(5, 7) };
+  }
+  
+  return bestArrangement;
+};
+
+const generateCombinations = (cards) => {
+  const combinations = [];
+  const n = cards.length;
+  
+  // Combinación simple: tomar diferentes agrupaciones de 5 cartas
+  for (let i = 0; i < Math.min(10, n - 4); i++) {
+    const hand5 = [...cards.slice(0, i), ...cards.slice(i + 1, i + 5)];
+    if (hand5.length === 5) {
+      combinations.push(hand5);
+    }
+  }
+  
+  return combinations;
+};
+
+// Función para determinar si el jugador gana (probabilidad ajustable)
+const shouldPlayerWin = (difficulty = "normal") => {
+  const probabilities = {
+    easy: 0.15,    // 15%
+    normal: 0.05,  // 5%
+    hard: 0.02     // 2%
+  };
+  
+  return Math.random() < (probabilities[difficulty] || probabilities.normal);
+};
+
+// Función para generar mano ganadora forzada
+const generateWinningHand = () => {
+  // Crear una mano que garantice victoria (dos pares)
+  return [
+    { value: 'A', suit: '♥', numeric: 14 },
+    { value: 'A', suit: '♠', numeric: 14 },
+    { value: 'K', suit: '♥', numeric: 13 },
+    { value: 'K', suit: '♠', numeric: 13 },
+    { value: 'Q', suit: '♥', numeric: 12 },
+    { value: 'J', suit: '♠', numeric: 11 },
+    { value: '10', suit: '♥', numeric: 10 }
+  ];
+};
+
+// Función para generar mano perdedora
+const generateLosingHand = () => {
+  // Crear una mano que probablemente pierda (sin pares fáciles)
+  return [
+    { value: 'A', suit: '♥', numeric: 14 },
+    { value: 'K', suit: '♠', numeric: 13 },
+    { value: 'Q', suit: '♦', numeric: 12 },
+    { value: 'J', suit: '♣', numeric: 11 },
+    { value: '9', suit: '♥', numeric: 9 },
+    { value: '7', suit: '♠', numeric: 7 },
+    { value: '5', suit: '♦', numeric: 5 }
+  ];
 };
 
 export default function PaiGow({ navigation }) {
@@ -346,7 +663,7 @@ export default function PaiGow({ navigation }) {
     addTickets,
     canAfford,
   } = useCoins();
-  const playSound = useGameSounds();
+  const { playSound, soundEnabled, toggleSound } = useGameSounds();
 
   const [bet, setBet] = useState(0);
   const [cards, setCards] = useState([]);
@@ -356,23 +673,78 @@ export default function PaiGow({ navigation }) {
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [arrangedHands, setArrangedHands] = useState({ hand5: [], hand2: [] });
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [dealingCards, setDealingCards] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false); // NUEVO ESTADO
 
-  const cardAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
 
+  // MODIFICADO: Bloquear navegación con modal de imagen
   useEffect(() => {
-    const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameInProgress) {
+          setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE ALERTA
+          return true;
+        }
+        return false;
+      }
+    );
+
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE BLOQUEADOR
+      }
+    });
+
+    return () => {
+      backHandler.remove();
+      unsubscribe();
     };
-    initializeAudio();
-  }, []);
+  }, [navigation, gameInProgress]);
+
+  // MODIFICADO: Bloquear la barra de pestañas con modal de imagen
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowBlockModal(true); // MOSTRAR MODAL EN VEZ DE BLOQUEADOR
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // AÑADIR FUNCIÓN PARA CERRAR EL MODAL
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
 
   const cardValues = {
     'A': 14, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 
@@ -386,16 +758,6 @@ export default function PaiGow({ navigation }) {
     const value = values[Math.floor(Math.random() * values.length)];
     const suit = suits[Math.floor(Math.random() * suits.length)];
     return { value, suit, numeric: cardValues[value] };
-  };
-
-  const animateCards = () => {
-    cardAnimations.setValue(0);
-    Animated.timing(cardAnimations, {
-      toValue: 1,
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
   };
 
   const animateResult = () => {
@@ -423,7 +785,7 @@ export default function PaiGow({ navigation }) {
     ]).start();
   };
 
-  const triggerWinAnimation = () => {
+  const triggerWinAnimation = (tickets) => {
     setShowWinAnimation(true);
     setTimeout(() => setShowWinAnimation(false), 3000);
   };
@@ -448,24 +810,38 @@ export default function PaiGow({ navigation }) {
     await playSound("coin");
     pulseAnimation();
 
-    animateCards();
+    setGameInProgress(true);
+    setDealingCards(true);
+
+    await playSound("shuffle");
 
     setTimeout(async () => {
-      // Repartir 7 cartas
-      const newCards = [];
-      for (let i = 0; i < 7; i++) {
-        newCards.push(dealCard());
-        if (i < 6) await playSound("card");
+      // Determinar si el jugador ganará
+      const playerWillWin = shouldPlayerWin("normal");
+      
+      let newCards;
+      
+      if (playerWillWin) {
+        newCards = generateWinningHand();
+      } else {
+        // 80% de probabilidad de mano perdedora, 20% mano aleatoria
+        newCards = Math.random() < 0.8 ? generateLosingHand() : Array(7).fill().map(() => dealCard());
       }
       
       setCards(newCards);
-      setGameState("arranging");
-      setResult("");
-      setTicketsWon(0);
-      setArrangedHands({ hand5: [], hand2: [] });
+      setGameState("dealing");
+      
+      // El estado "dealing" será manejado por CardDealAnimation
+    }, 1000);
+  };
 
-      await playSound("card");
-    }, 400);
+  const handleDealingComplete = async () => {
+    setDealingCards(false);
+    setGameState("arranging");
+    setResult("");
+    setTicketsWon(0);
+    setArrangedHands({ hand5: [], hand2: [] });
+    await playSound("card");
   };
 
   const handleAutoArrange = async () => {
@@ -475,34 +851,35 @@ export default function PaiGow({ navigation }) {
     const arrangement = autoArrangeCards(cards);
     setArrangedHands(arrangement);
     
+    // Pequeña pausa antes de evaluar
     setTimeout(() => {
       evaluateHands(arrangement.hand5, arrangement.hand2);
-    }, 1000);
+    }, 800);
   };
 
   const evaluateHands = async (hand5, hand2) => {
     const evaluation = evaluatePaiGowHand(hand5, hand2);
     
     if (evaluation.isValid) {
-      const winAmount = bet;
+      // JUGADOR GANA - solo dar tickets
       const ticketReward = getTicketRewards(bet, true);
       
-      await addCoins(winAmount, `Ganancia en Pai Gow Poker - Mano válida`);
       await addTickets(ticketReward, `Ganancia - Pai Gow Poker`);
       
-      setResult(`¡Maneki acepta tu mano! +${winAmount} MC + ${ticketReward} Tickets`);
+      setResult(`¡Maneki acepta tu mano! +${ticketReward} Tickets`);
       setTicketsWon(ticketReward);
       await playSound("win");
-      triggerWinAnimation();
+      triggerWinAnimation(ticketReward);
     } else {
+      // SI PIERDE - NO dar nada
       setResult("Maneki rechaza tu mano. No cumple las reglas");
-      setTicketsWon(getTicketRewards(bet, false));
-      await addTickets(getTicketRewards(bet, false), "Tickets por mano inválida");
+      setTicketsWon(0);
       await playSound("lose");
       triggerLoseAnimation();
     }
     
     setGameState("result");
+    setGameInProgress(false);
     animateResult();
   };
 
@@ -515,65 +892,36 @@ export default function PaiGow({ navigation }) {
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
     setArrangedHands({ hand5: [], hand2: [] });
+    setGameInProgress(false);
+    setDealingCards(false);
     await playSound("click");
   };
 
   const renderCard = (card, index, isHighlighted = false) => {
-    const cardAnimation = {
-      transform: [
-        {
-          translateY: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [-30, 0],
-          }),
-        },
-        {
-          scale: cardAnimations.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.8, 1],
-          }),
-        },
-      ],
-      opacity: cardAnimations,
-    };
-
     const getCardColor = (suit) => {
       return suit === "♥" || suit === "♦" ? "#DC2626" : "#000000";
     };
 
     return (
-      <Animated.View key={index} style={[
+      <View key={index} style={[
         styles.card, 
-        cardAnimation,
         isHighlighted && styles.highlightedCard
       ]}>
-        <Text
-          style={[styles.cardValue, { color: getCardColor(card.suit) }]}
-        >
+        <Text style={[styles.cardValue, { color: getCardColor(card.suit) }]}>
           {card.value}
         </Text>
         <Text style={[styles.cardSuit, { color: getCardColor(card.suit) }]}>
           {card.suit}
         </Text>
         <View style={styles.cardCorner}>
-          <Text
-            style={[
-              styles.cardCornerValue,
-              { color: getCardColor(card.suit) },
-            ]}
-          >
+          <Text style={[styles.cardCornerValue, { color: getCardColor(card.suit) }]}>
             {card.value}
           </Text>
-          <Text
-            style={[
-              styles.cardCornerSuit,
-              { color: getCardColor(card.suit) },
-            ]}
-          >
+          <Text style={[styles.cardCornerSuit, { color: getCardColor(card.suit) }]}>
             {card.suit}
           </Text>
         </View>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -581,9 +929,23 @@ export default function PaiGow({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* AÑADIR MODAL DE BLOQUEO */}
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
+
       {/* Animaciones */}
-      <WinAnimation show={showWinAnimation} />
+      <WinAnimation show={showWinAnimation} ticketsWon={ticketsWon} />
       <LoseAnimation show={showLoseAnimation} />
+
+      {/* ELIMINAR BLOQUEADOR DE PESTAÑAS ORIGINAL */}
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Text style={styles.gameInProgressText}>
+            ⚠️ PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -592,10 +954,8 @@ export default function PaiGow({ navigation }) {
       >
         {/* Header mejorado */}
         <View style={styles.header}>
-          {/* Saldo y Tickets al lado izquierdo */}
           <View style={styles.balancesContainer}>
             <View style={styles.balanceRow}>
-              {/* Saldo */}
               <View style={styles.balanceItem}>
                 <View style={styles.coinsDisplay}>
                   <Image
@@ -608,7 +968,6 @@ export default function PaiGow({ navigation }) {
                 </View>
               </View>
 
-              {/* Tickets */}
               <View style={styles.balanceItem}>
                 <View style={styles.ticketsDisplay}>
                   <Image
@@ -623,27 +982,41 @@ export default function PaiGow({ navigation }) {
             </View>
           </View>
 
-
-          {/* Espacio vacío para balancear */}
-          <View style={styles.emptySpace} />
+          {/* Botón de sonido */}
+          <TouchableOpacity onPress={toggleSound} style={styles.soundButton}>
+            <Ionicons 
+              name={soundEnabled ? "volume-high" : "volume-mute"} 
+              size={24} 
+              color="#FFD700" 
+            />
+          </TouchableOpacity>
         </View>
 
-        {/* Cartas repartidas */}
+        {/* Cartas repartidas con animación */}
         {cards.length > 0 && (
           <View style={styles.area}>
             <View style={styles.areaHeader}>
               <Text style={styles.areaTitle}>TUS 7 CARTAS</Text>
               <Text style={styles.areaScore}>
-                {gameState === "arranging" ? "ORGANIZAR" : ""}
+                {gameState === "arranging" ? "ORGANIZAR" : 
+                 gameState === "dealing" ? "REPARTIENDO..." : ""}
               </Text>
             </View>
-            <View style={styles.cardsContainer}>
-              {cards.map((card, index) => renderCard(card, index))}
-            </View>
+            
+            {dealingCards ? (
+              <CardDealAnimation 
+                cards={cards} 
+                onComplete={handleDealingComplete}
+              />
+            ) : (
+              <View style={styles.cardsContainer}>
+                {cards.map((card, index) => renderCard(card, index))}
+              </View>
+            )}
           </View>
         )}
 
-        {/* Manos organizadas (si aplica) */}
+        {/* Manos organizadas */}
         {arrangedHands.hand5.length > 0 && (
           <View style={styles.arrangedHands}>
             <View style={styles.handContainer}>
@@ -682,7 +1055,8 @@ export default function PaiGow({ navigation }) {
         >
           <Text style={styles.message}>
             {result || (gameState === "betting" ? "SELECCIONE SU APUESTA" : 
-                      gameState === "arranging" ? "ORGANICE SUS CARTAS EN 2 MANOS" : "")}
+                      gameState === "arranging" ? "ORGANICE SUS CARTAS EN 2 MANOS" :
+                      gameState === "dealing" ? "REPARTIENDO CARTAS..." : "")}
           </Text>
           {ticketsWon > 0 && gameState === "result" && (
             <View style={styles.ticketsWonContainer}>
@@ -754,7 +1128,7 @@ export default function PaiGow({ navigation }) {
                 <Text style={styles.autoButtonText}>ORGANIZAR AUTOMÁTICAMENTE</Text>
               </TouchableOpacity>
               <Text style={styles.arrangeHint}>
-                Mano de 5 y mano de 2 cartas deben tener al menos un par cada una
+                Ambas manos deben tener al menos un par cada una
               </Text>
             </View>
           )}
@@ -779,7 +1153,7 @@ export default function PaiGow({ navigation }) {
           <Text style={styles.rule}>• Separa en mano de 5 y mano de 2 cartas</Text>
           <Text style={styles.rule}>• Ambas manos deben tener al menos un par</Text>
           <Text style={styles.rule}>• Maneki acepta tu mano si cumple las reglas</Text>
-          <Text style={styles.rule}>• Ganas tu apuesta + tickets si es válida</Text>
+          <Text style={styles.rule}>• Ganas tickets si es válida</Text>
         </View>
 
         <View style={styles.bottomSpacer} />
@@ -858,21 +1232,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    top: 0,
-  },
-  title: {
-    color: "#FFD700",
-    fontSize: 18,
-    fontWeight: "bold",
-    letterSpacing: 1,
-  },
-  emptySpace: {
-    width: 80,
+  soundButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "#1A1A1A",
+    borderWidth: 1,
+    borderColor: "#FFD700",
   },
   area: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
@@ -909,13 +1274,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexWrap: "wrap",
     alignItems: "center",
+    gap: 5,
   },
   card: {
     width: 50,
     height: 70,
     backgroundColor: "#FFFFFF",
     borderRadius: 6,
-    margin: 3,
     justifyContent: "center",
     alignItems: "center",
     elevation: 6,
@@ -931,6 +1296,7 @@ const styles = StyleSheet.create({
     borderColor: "#FFD700",
     borderWidth: 2,
     backgroundColor: "#FFF8E1",
+    transform: [{ scale: 1.05 }],
   },
   cardValue: {
     fontSize: 14,
@@ -1187,5 +1553,43 @@ const styles = StyleSheet.create({
     marginTop: 10,
     textAlign: "center",
   },
+  ticketsWonAnimation: {
+    color: "#10B981",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginTop: 5,
+  },
+  // Estilos para el indicador de juego en progreso
+  gameInProgressIndicator: {
+    backgroundColor: "#DC2626",
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  // NUEVOS ESTILOS PARA EL MODAL TRANSPARENTE
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,
+    height: height * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
+  },
 });
-

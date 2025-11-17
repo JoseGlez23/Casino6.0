@@ -27,7 +27,14 @@
       "favicon": "./assets/juego1.jpg"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.manekicasino",
+          "enableGooglePay": false
+        }
+      ]
     ]
   }
 }

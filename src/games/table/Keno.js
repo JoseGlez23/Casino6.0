@@ -1,5 +1,5 @@
 // src/games/table/Keno.js
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,10 +10,82 @@ import {
   Vibration,
   Image,
   Modal,
+  Dimensions,
+  SafeAreaView,
+  BackHandler,
+  Easing
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
-import { useSounds } from "../../hooks/useSounds";
+
+const { width, height } = Dimensions.get("window");
+
+// Componente de Modal de Bloqueo - EXACTAMENTE IGUAL QUE BINGO
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Cerrar automáticamente después de 3 segundos
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlay} 
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <Animated.View 
+          style={[
+            styles.blockModalContainer,
+            { 
+              transform: [{ scale: scaleAnim }],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}  // IMAGEN AGREGADA
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 // Componente de animación de victoria
 const WinAnimation = ({ show, onClose }) => {
@@ -76,65 +148,10 @@ const WinAnimation = ({ show, onClose }) => {
   );
 };
 
-// Componente de animación de derrota
-const LoseAnimation = ({ show, onClose }) => {
-  const [scaleAnim] = useState(new Animated.Value(0));
-  const [shakeAnim] = useState(new Animated.Value(0));
-
-  React.useEffect(() => {
-    if (show) {
-      Animated.sequence([
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          tension: 100,
-          friction: 8,
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      const timer = setTimeout(() => {
-        onClose();
-      }, 3000);
-
-      return () => clearTimeout(timer);
-    } else {
-      scaleAnim.setValue(0);
-      shakeAnim.setValue(0);
-    }
-  }, [show]);
-
-  const shakeInterpolation = shakeAnim.interpolate({
-    inputRange: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
-    outputRange: [0, -10, 10, -10, 10, -10, 10, -10, 10, -10, 0],
-  });
-
-  if (!show) return null;
-
-  return (
-    <Modal transparent={true} visible={show} animationType="fade">
-      <View style={styles.modalContainer}>
-        <Animated.View
-          style={[
-            styles.loseAnimation,
-            {
-              transform: [
-                { scale: scaleAnim },
-                { translateX: shakeInterpolation },
-              ],
-            },
-          ]}
-        >
-          <Ionicons name="sad-outline" size={80} color="#EF4444" />
-          <Text style={styles.loseAnimationText}>¡PERDISTE!</Text>
-        </Animated.View>
-      </View>
-    </Modal>
-  );
+// Función para verificar si gana (5% de probabilidad)
+const checkWinProbability = () => {
+  const random = Math.random(); // Número entre 0 y 1
+  return random <= 0.05; // 5% de probabilidad
 };
 
 export default function Keno({ navigation }) {
@@ -142,35 +159,79 @@ export default function Keno({ navigation }) {
     manekiCoins,
     tickets,
     subtractCoins,
-    addCoins,
     addTickets,
     canAfford,
   } = useCoins();
 
-  const { playSound } = useSounds();
   const [bet, setBet] = useState(0);
   const [selectedNumbers, setSelectedNumbers] = useState([]);
   const [drawnNumbers, setDrawnNumbers] = useState([]);
   const [gameState, setGameState] = useState("selecting");
   const [result, setResult] = useState("");
   const [matches, setMatches] = useState(0);
-  const [winAmount, setWinAmount] = useState(0);
   const [ticketsWon, setTicketsWon] = useState(0);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
-  const [showLoseAnimation, setShowLoseAnimation] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [hasWon, setHasWon] = useState(false);
+  
+  // NUEVO: Estado para prevenir múltiples clicks
+  const [isLoading, setIsLoading] = useState(false);
 
   // Animaciones
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const messageAnim = useRef(new Animated.Value(0)).current;
 
-  // Todos los números del 1 al 80 en una sola lista
-  const numbers = Array.from({ length: 80 }, (_, i) => i + 1);
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
 
-  // Función para calcular tickets ganados
+  // Manejar navegación y botón de retroceso
+  useEffect(() => {
+    const handleBackPress = () => {
+      if (gameState === "drawing") {
+        setShowBlockModal(true);
+        return true;
+      }
+      return false;
+    };
+
+    backHandler.current = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+
+    navigationListener.current = navigation.addListener('beforeRemove', (e) => {
+      if (gameState === "drawing") {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, gameState]);
+
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
+  const animateMessage = () => {
+    messageAnim.setValue(0);
+    Animated.spring(messageAnim, {
+      toValue: 1,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  // Función para calcular tickets ganados (solo tickets, no coins)
   const getTicketRewards = (betAmount, matchesCount = 0) => {
-    const baseTickets = Math.floor(betAmount * 0.08); // 8% de la apuesta
-    const bonusTickets = matchesCount * 2; // Bonus por aciertos
-    return Math.max(1, baseTickets + bonusTickets);
+    const baseTickets = Math.floor(betAmount * 0.15); // 15% de la apuesta
+    const bonusTickets = matchesCount * 3; // Bonus por aciertos
+    return Math.max(10, baseTickets + bonusTickets);
   };
 
   const startPulseAnimation = () => {
@@ -195,10 +256,11 @@ export default function Keno({ navigation }) {
     pulseAnim.setValue(1);
   };
 
+  // Todos los números del 1 al 80 en una sola lista
+  const numbers = Array.from({ length: 80 }, (_, i) => i + 1);
+
   const toggleNumber = (number) => {
     if (gameState !== "selecting") return;
-
-    playSound("click");
 
     const newSelected = [...selectedNumbers];
     const index = newSelected.indexOf(number);
@@ -212,35 +274,40 @@ export default function Keno({ navigation }) {
     setSelectedNumbers(newSelected);
   };
 
+  // FUNCIÓN MEJORADA: Con protección contra múltiples clicks
   const placeBet = async (amount) => {
+    // Prevenir múltiples clicks
+    if (isLoading || gameState !== "selecting") {
+      return;
+    }
+
     if (!canAfford(amount)) {
-      playSound("error");
       Vibration.vibrate(100);
       return;
     }
 
     if (selectedNumbers.length === 0) {
-      playSound("error");
       Vibration.vibrate(100);
       return;
     }
 
     try {
-      playSound("coin");
+      setIsLoading(true);
       await subtractCoins(amount, "Apuesta en Keno");
       setBet(amount);
       setGameState("drawing");
       setDrawnNumbers([]);
       setResult("");
       setMatches(0);
-      setWinAmount(0);
       setTicketsWon(0);
+      setHasWon(false);
 
       // Simular sorteo con animación
       await drawNumbersWithAnimation(amount);
     } catch (error) {
-      playSound("error");
       Vibration.vibrate(100);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -272,58 +339,44 @@ export default function Keno({ navigation }) {
 
     setDrawnNumbers(newDrawnNumbers);
 
-    // Calcular aciertos y premio
+    // Calcular aciertos
     const matchesCount = selectedNumbers.filter((num) =>
       newDrawnNumbers.includes(num)
     ).length;
-    const calculatedWin = calculateWin(matchesCount, betAmount);
-    const calculatedTickets = getTicketRewards(betAmount, matchesCount);
-
+    
     setMatches(matchesCount);
-    setWinAmount(calculatedWin);
-    setTicketsWon(calculatedTickets);
 
-    if (calculatedWin > 0) {
-      playSound("success");
-      Vibration.vibrate([0, 300, 100, 300]);
-      startPulseAnimation();
-      setShowWinAnimation(true);
-
-      try {
-        await addCoins(
-          calculatedWin,
-          `Victoria en Keno - ${matchesCount} aciertos`
-        );
-        await addTickets(calculatedTickets, "Tickets ganados en Keno");
-      } catch (error) {
-        console.error("Error actualizando premios:", error);
-      }
-
-      setResult(`¡${matchesCount} ACIERTOS!`);
+    // Verificar si gana (5% de probabilidad + mínimo 4 aciertos)
+    if (matchesCount >= 4 && checkWinProbability()) {
+      await handleWin(betAmount, matchesCount);
     } else {
-      playSound("error");
-      setShowLoseAnimation(true);
-      setResult(`${matchesCount} aciertos`);
+      // No gana
+      Vibration.vibrate(100);
+      setResult(`${matchesCount} aciertos - Mejor suerte la próxima`);
+      setHasWon(false);
     }
 
     setGameState("result");
+    animateMessage();
   };
 
-  const calculateWin = (matchesCount, betAmount) => {
-    const payoutTable = {
-      0: 0,
-      1: 0,
-      2: 0,
-      3: 0,
-      4: 1,
-      5: 2,
-      6: 10,
-      7: 50,
-      8: 100,
-      9: 500,
-      10: 1000,
-    };
-    return betAmount * payoutTable[matchesCount] || 0;
+  const handleWin = async (betAmount, matchesCount) => {
+    const calculatedTickets = getTicketRewards(betAmount, matchesCount);
+    
+    setTicketsWon(calculatedTickets);
+    setHasWon(true);
+    
+    Vibration.vibrate([0, 300, 100, 300]);
+    startPulseAnimation();
+    setShowWinAnimation(true);
+
+    try {
+      await addTickets(calculatedTickets, "Tickets ganados en Keno");
+    } catch (error) {
+      console.error("Error actualizando tickets:", error);
+    }
+
+    setResult(`¡${matchesCount} ACIERTOS! +${calculatedTickets} TICKETS`);
   };
 
   const resetGame = () => {
@@ -333,8 +386,9 @@ export default function Keno({ navigation }) {
     setGameState("selecting");
     setResult("");
     setMatches(0);
-    setWinAmount(0);
     setTicketsWon(0);
+    setHasWon(false);
+    setIsLoading(false); // Reset loading state
     stopPulseAnimation();
   };
 
@@ -351,7 +405,8 @@ export default function Keno({ navigation }) {
           isDrawn && styles.drawnNumber,
           isMatch && styles.matchedNumber,
           gameState === "result" &&
-            isMatch && {
+            isMatch &&
+            hasWon && {
               transform: [{ scale: pulseAnim }],
             },
         ]}
@@ -370,259 +425,318 @@ export default function Keno({ navigation }) {
     );
   };
 
+  const betAmounts = [50, 100, 250, 500];
+
   return (
-    <View style={styles.container}>
-      {/* Animaciones */}
+    <SafeAreaView style={styles.safeArea}>
       <WinAnimation
         show={showWinAnimation}
         onClose={() => setShowWinAnimation(false)}
       />
-      <LoseAnimation
-        show={showLoseAnimation}
-        onClose={() => setShowLoseAnimation(false)}
-      />
+      
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
 
-      {/* Header Mejorado */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        >
-          <Ionicons name="arrow-back" size={24} color="#FFD700" />
-        </TouchableOpacity>
-
-        <Text style={styles.title}>KENO</Text>
-
-        <View style={styles.balanceContainer}>
-          <View style={styles.balanceItem}>
-            <Image
-              source={require("../../assets/dinero.png")}
-              style={styles.balanceIcon}
-            />
-            <Text style={styles.balanceValue}>{manekiCoins}</Text>
+      {/* CONTENEDOR PRINCIPAL SIN SCROLLVIEW */}
+      <View style={styles.container}>
+        
+        {/* Header Compacto */}
+        <View style={styles.header}>
+          <View style={styles.balances}>
+            <View style={styles.balanceItem}>
+              <Image
+                source={require("../../assets/dinero.png")}
+                style={styles.balanceIcon}
+              />
+              <Text style={styles.balanceText}>{manekiCoins.toLocaleString()}</Text>
+            </View>
+            <View style={styles.balanceItem}>
+              <Image
+                source={require("../../assets/TICKET.png")}
+                style={styles.balanceIcon}
+              />
+              <Text style={styles.balanceText}>{tickets.toLocaleString()}</Text>
+            </View>
           </View>
-          <View style={styles.balanceItem}>
-            <Image
-              source={require("../../assets/TICKET.png")}
-              style={styles.balanceIcon}
-            />
-            <Text style={styles.balanceValue}>{tickets}</Text>
-          </View>
+
+          <View style={styles.emptySpace} />
         </View>
-      </View>
 
-      <Text style={styles.instructions}>
-        SELECCIONA HASTA 10 NÚMEROS (1-80)
-      </Text>
+        <Text style={styles.instructions}>
+          SELECCIONA HASTA 10 NÚMEROS (1-80)
+        </Text>
 
-      <Text style={styles.selectedCount}>
-        SELECCIONADOS: {selectedNumbers.length}/10
-      </Text>
+        <Text style={styles.selectedCount}>
+          SELECCIONADOS: {selectedNumbers.length}/10
+        </Text>
 
-      {/* Tablero de números - TODOS LOS NÚMEROS EN UNA SOLA LISTA */}
-      <View style={styles.numbersContainer}>
-        <FlatList
-          data={numbers}
-          renderItem={renderNumber}
-          keyExtractor={(item) => item.toString()}
-          numColumns={10}
-          scrollEnabled={true}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.numbersGrid}
-        />
-      </View>
+        {/* Mensaje del Juego */}
+        {result && (
+          <Animated.View style={[styles.messageContainer, { transform: [{ scale: messageAnim }] }]}>
+            <Text style={styles.message}>{result}</Text>
+            {ticketsWon > 0 && (
+              <View style={styles.ticketsWonContainer}>
+                <Text style={styles.ticketsWonText}>+{ticketsWon} TICKETS</Text>
+              </View>
+            )}
+          </Animated.View>
+        )}
 
-      {/* Números sorteados */}
-      {drawnNumbers.length > 0 && (
-        <View style={styles.drawnContainer}>
-          <Text style={styles.drawnTitle}>NÚMEROS SORTEADOS:</Text>
-          <View style={styles.drawnNumbers}>
-            {drawnNumbers.map((num, index) => (
-              <Text
-                key={index}
-                style={[
-                  styles.drawnNumberText,
-                  selectedNumbers.includes(num) && styles.matchedNumberText,
-                ]}
-              >
-                {num}
-              </Text>
-            ))}
-          </View>
+        {/* Tablero de números - CENTRADO Y CON SCROLL PROPIO */}
+        <View style={styles.numbersContainer}>
+          <FlatList
+            data={numbers}
+            renderItem={renderNumber}
+            keyExtractor={(item) => item.toString()}
+            numColumns={10}
+            scrollEnabled={true}
+            showsVerticalScrollIndicator={true}
+            contentContainerStyle={styles.numbersGrid}
+          />
         </View>
-      )}
 
-      {/* Resultados */}
-      {gameState === "result" && (
-        <Animated.View
-          style={[
-            styles.resultContainer,
-            winAmount > 0 && { transform: [{ scale: pulseAnim }] },
-          ]}
-        >
-          <Text style={styles.result}>{result}</Text>
-          {winAmount > 0 && (
-            <>
-              <Text style={styles.winAmount}>+{winAmount} MANEKI COINS</Text>
-              <Text style={styles.ticketsWon}>+{ticketsWon} TICKETS</Text>
-            </>
-          )}
-          {winAmount === 0 && matches > 0 && (
-            <Text style={styles.noWinText}>Sin premio esta vez</Text>
-          )}
-        </Animated.View>
-      )}
-
-      {/* Controles */}
-      <View style={styles.controls}>
-        {gameState === "selecting" && (
-          <View style={styles.betContainer}>
-            <Text style={styles.betTitle}>SELECCIONA APUESTA</Text>
-            <View style={styles.betButtons}>
-              {[50, 100, 250, 500].map((amount) => (
-                <TouchableOpacity
-                  key={amount}
+        {/* Números sorteados */}
+        {drawnNumbers.length > 0 && (
+          <View style={styles.drawnContainer}>
+            <Text style={styles.drawnTitle}>NÚMEROS SORTEADOS:</Text>
+            <View style={styles.drawnNumbers}>
+              {drawnNumbers.map((num, index) => (
+                <Text
+                  key={index}
                   style={[
-                    styles.betButton,
-                    (!canAfford(amount) || selectedNumbers.length === 0) &&
-                      styles.disabledButton,
+                    styles.drawnNumberText,
+                    selectedNumbers.includes(num) && styles.matchedNumberText,
                   ]}
-                  onPress={() => placeBet(amount)}
-                  disabled={!canAfford(amount) || selectedNumbers.length === 0}
                 >
-                  <Text style={styles.betButtonText}>{amount}</Text>
-                </TouchableOpacity>
+                  {num}
+                </Text>
               ))}
             </View>
-            <Text style={styles.betInfo}>
-              Tickets: +{getTicketRewards(100)} por 100 coins + bonus por
-              aciertos
-            </Text>
           </View>
         )}
 
-        {gameState === "result" && (
-          <TouchableOpacity style={styles.resetButton} onPress={resetGame}>
-            <Text style={styles.resetButtonText}>JUGAR OTRA VEZ</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+        {/* Controles */}
+        <View style={styles.controls}>
+          {gameState === "selecting" && (
+            <View style={styles.betContainer}>
+              <View style={styles.betAmounts}>
+                {betAmounts.map((amount) => (
+                  <TouchableOpacity
+                    key={amount}
+                    style={[
+                      styles.betAmountButton,
+                      (!canAfford(amount) || selectedNumbers.length === 0 || isLoading) &&
+                        styles.disabledButton,
+                      bet === amount && styles.selectedBet,
+                    ]}
+                    onPress={() => {
+                      if (canAfford(amount) && !isLoading) {
+                        setBet(amount);
+                      }
+                    }}
+                    disabled={!canAfford(amount) || selectedNumbers.length === 0 || isLoading}
+                  >
+                    <Text style={styles.betAmountText}>{amount.toLocaleString()}</Text>
+                    <Text style={styles.ticketRewardText}>
+                      +{getTicketRewards(amount)} TICKETS
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-      {/* Tabla de pagos */}
-      <View style={styles.payouts}>
-        <Text style={styles.payoutsTitle}>
-          TABLA DE PREMIOS (MULTIPLICADOR):
-        </Text>
-        <View style={styles.payoutGrid}>
-          <View style={styles.payoutColumn}>
-            <Text style={styles.payoutHeader}>Aciertos</Text>
-            <Text style={styles.payoutValue}>4</Text>
-            <Text style={styles.payoutValue}>5</Text>
-            <Text style={styles.payoutValue}>6</Text>
-            <Text style={styles.payoutValue}>7</Text>
+              <View style={styles.betActions}>
+                <Text style={styles.currentBet}>
+                  {bet > 0 ? `APUESTA: ${bet.toLocaleString()} MC` : "SELECCIONE MONTO"}
+                </Text>
+                
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton, 
+                    styles.startButton, 
+                    (bet === 0 || selectedNumbers.length === 0 || isLoading) && styles.disabledButton
+                  ]}
+                  onPress={() => placeBet(bet)}
+                  disabled={bet === 0 || selectedNumbers.length === 0 || isLoading}
+                >
+                  <Ionicons name="play" size={18} color="#FFF" />
+                  <Text style={styles.actionButtonText}>
+                    {isLoading ? "CARGANDO..." : "INICIAR JUEGO"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {gameState === "result" && (
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.playAgainButton]} 
+              onPress={resetGame}
+            >
+              <Ionicons name="refresh" size={18} color="#FFF" />
+              <Text style={styles.actionButtonText}>JUGAR DE NUEVO</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Tabla de pagos */}
+        <View style={styles.payouts}>
+          <Text style={styles.payoutsTitle}>
+            TABLA DE PREMIOS (SOLO TICKETS):
+          </Text>
+          <View style={styles.payoutGrid}>
+            <View style={styles.payoutColumn}>
+              <Text style={styles.payoutHeader}>Aciertos</Text>
+              <Text style={styles.payoutValue}>4</Text>
+              <Text style={styles.payoutValue}>5</Text>
+              <Text style={styles.payoutValue}>6</Text>
+              <Text style={styles.payoutValue}>7</Text>
+            </View>
+            <View style={styles.payoutColumn}>
+              <Text style={styles.payoutHeader}>Tickets</Text>
+              <Text style={styles.payoutValue}>+15%</Text>
+              <Text style={styles.payoutValue}>+18%</Text>
+              <Text style={styles.payoutValue}>+21%</Text>
+              <Text style={styles.payoutValue}>+24%</Text>
+            </View>
+            <View style={styles.payoutColumn}>
+              <Text style={styles.payoutHeader}>Aciertos</Text>
+              <Text style={styles.payoutValue}>8</Text>
+              <Text style={styles.payoutValue}>9</Text>
+              <Text style={styles.payoutValue}>10</Text>
+              <Text style={styles.payoutValue}>-</Text>
+            </View>
+            <View style={styles.payoutColumn}>
+              <Text style={styles.payoutHeader}>Tickets</Text>
+              <Text style={styles.payoutValue}>+27%</Text>
+              <Text style={styles.payoutValue}>+30%</Text>
+              <Text style={styles.payoutValue}>+33%</Text>
+              <Text style={styles.payoutValue}>-</Text>
+            </View>
           </View>
-          <View style={styles.payoutColumn}>
-            <Text style={styles.payoutHeader}>Premio</Text>
-            <Text style={styles.payoutValue}>1x</Text>
-            <Text style={styles.payoutValue}>2x</Text>
-            <Text style={styles.payoutValue}>10x</Text>
-            <Text style={styles.payoutValue}>50x</Text>
-          </View>
-          <View style={styles.payoutColumn}>
-            <Text style={styles.payoutHeader}>Aciertos</Text>
-            <Text style={styles.payoutValue}>8</Text>
-            <Text style={styles.payoutValue}>9</Text>
-            <Text style={styles.payoutValue}>10</Text>
-            <Text style={styles.payoutValue}>-</Text>
-          </View>
-          <View style={styles.payoutColumn}>
-            <Text style={styles.payoutHeader}>Premio</Text>
-            <Text style={styles.payoutValue}>100x</Text>
-            <Text style={styles.payoutValue}>500x</Text>
-            <Text style={styles.payoutValue}>1000x</Text>
-            <Text style={styles.payoutValue}>-</Text>
-          </View>
+          <Text style={styles.payoutNote}>
+            * Más aciertos = más tickets. Mínimo 4 aciertos para ganar.
+          </Text>
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#0A0A0A",
+  },
   container: {
     flex: 1,
-    backgroundColor: "#0F0F0F",
-    padding: 16,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 15,
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
-    paddingHorizontal: 5,
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
-  backButton: {
-    padding: 8,
-  },
-  title: {
-    color: "#FFD700",
-    fontSize: 24,
-    fontWeight: "bold",
-    textAlign: "center",
-    letterSpacing: 2,
-    flex: 1,
-  },
-  balanceContainer: {
-    alignItems: "flex-end",
+  balances: {
+    flexDirection: "row",
+    gap: 8,
   },
   balanceItem: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#1A1A1A",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#333",
-    marginBottom: 4,
+    gap: 6,
+    minWidth: 80,
   },
   balanceIcon: {
-    width: 16,
-    height: 16,
+    width: 18,
+    height: 18,
     resizeMode: "contain",
-    marginRight: 4,
   },
-  balanceValue: {
+  balanceText: {
     color: "#FFD700",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "bold",
+  },
+  titleContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  title: {
+    color: "#FFD700",
+    fontSize: 18,
+    fontWeight: "bold",
+    letterSpacing: 1,
+  },
+  emptySpace: {
+    width: 70,
   },
   instructions: {
     color: "#FFF",
     textAlign: "center",
-    marginBottom: 10,
-    fontSize: 16,
+    marginBottom: 8,
+    fontSize: 14,
     fontWeight: "600",
-    letterSpacing: 0.5,
   },
   selectedCount: {
     color: "#FFD700",
     textAlign: "center",
-    marginBottom: 15,
+    marginBottom: 12,
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 12,
+  },
+  messageContainer: {
+    alignItems: "center",
+    marginVertical: 8,
+    padding: 10,
+    backgroundColor: "rgba(26, 26, 26, 0.95)",
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: "#FFD700",
+    minHeight: 50,
+    justifyContent: "center",
+  },
+  message: {
+    color: "#FFD700",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  ticketsWonContainer: {
+    marginTop: 4,
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#10B981",
+  },
+  ticketsWonText: {
+    color: "#10B981",
+    fontSize: 11,
+    fontWeight: "bold",
   },
   numbersContainer: {
     flex: 1,
-    marginBottom: 20,
-    maxHeight: 300,
+    marginBottom: 16,
   },
   numbersGrid: {
     paddingBottom: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   number: {
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     backgroundColor: "#333",
     margin: 2,
     justifyContent: "center",
@@ -645,26 +759,26 @@ const styles = StyleSheet.create({
   },
   numberText: {
     color: "#FFF",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "bold",
   },
   numberTextSelected: {
     color: "#FFF",
   },
   drawnContainer: {
-    marginBottom: 15,
+    marginBottom: 12,
     backgroundColor: "#1F2937",
-    padding: 12,
-    borderRadius: 10,
+    padding: 10,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: "#374151",
   },
   drawnTitle: {
     color: "#FFD700",
     fontWeight: "bold",
-    marginBottom: 8,
+    marginBottom: 6,
     textAlign: "center",
-    fontSize: 14,
+    fontSize: 12,
   },
   drawnNumbers: {
     flexDirection: "row",
@@ -673,141 +787,134 @@ const styles = StyleSheet.create({
   },
   drawnNumberText: {
     color: "#D1D5DB",
-    marginRight: 8,
-    marginBottom: 5,
-    fontSize: 14,
+    marginRight: 6,
+    marginBottom: 4,
+    fontSize: 12,
     fontWeight: "600",
   },
   matchedNumberText: {
     color: "#10B981",
     fontWeight: "bold",
   },
-  resultContainer: {
-    alignItems: "center",
-    backgroundColor: "#1F2937",
-    padding: 20,
-    borderRadius: 15,
-    marginBottom: 15,
-    borderWidth: 2,
-    borderColor: "#374151",
-  },
-  result: {
-    color: "#FFD700",
-    fontSize: 20,
-    textAlign: "center",
-    fontWeight: "bold",
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  winAmount: {
-    color: "#10B981",
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 4,
-  },
-  ticketsWon: {
-    color: "#3B82F6",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  noWinText: {
-    color: "#EF4444",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
   controls: {
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 16,
   },
   betContainer: {
     alignItems: "center",
   },
-  betTitle: {
-    color: "#FFF",
-    fontSize: 16,
-    marginBottom: 12,
-    fontWeight: "bold",
-    letterSpacing: 0.5,
-  },
-  betButtons: {
+  betAmounts: {
     flexDirection: "row",
-    flexWrap: "wrap",
     justifyContent: "center",
-    marginBottom: 10,
+    flexWrap: "wrap",
+    marginBottom: 12,
+    gap: 6,
   },
-  betButton: {
-    backgroundColor: "#FFD700",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    margin: 6,
-    minWidth: 70,
+  betAmountButton: {
+    backgroundColor: "#2A2A2A",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: "center",
     borderWidth: 2,
-    borderColor: "#B45309",
+    borderColor: "#444",
+    minWidth: 65,
   },
-  disabledButton: {
-    backgroundColor: "#374151",
-    borderColor: "#6B7280",
+  selectedBet: {
+    borderColor: "#FFD700",
+    backgroundColor: "rgba(255, 215, 0, 0.15)",
   },
-  betButtonText: {
-    color: "#000",
-    fontWeight: "bold",
-    fontSize: 14,
-    textAlign: "center",
-  },
-  betInfo: {
-    color: "#9CA3AF",
+  betAmountText: {
+    color: "#FFD700",
     fontSize: 12,
+    fontWeight: "bold",
+  },
+  ticketRewardText: {
+    color: "#10B981",
+    fontSize: 9,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  betActions: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+  },
+  currentBet: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontWeight: "bold",
     textAlign: "center",
-    marginTop: 8,
+    backgroundColor: "rgba(139, 0, 0, 0.4)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FFD700",
   },
-  resetButton: {
-    backgroundColor: "#DC2626",
-    paddingHorizontal: 35,
-    paddingVertical: 16,
-    borderRadius: 25,
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: "#B91C1C",
+    gap: 6,
+    justifyContent: "center",
   },
-  resetButtonText: {
+  actionButtonText: {
     color: "#FFF",
     fontWeight: "bold",
-    fontSize: 16,
-    letterSpacing: 1,
+    fontSize: 11,
+  },
+  startButton: {
+    backgroundColor: "#10B981",
+    borderColor: "#059669",
+  },
+  playAgainButton: {
+    backgroundColor: "#10B981",
+    borderColor: "#059669",
+    paddingHorizontal: 20,
   },
   payouts: {
     backgroundColor: "#1F2937",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 2,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
     borderColor: "#374151",
   },
   payoutsTitle: {
     color: "#FFD700",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "bold",
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: "center",
-    letterSpacing: 0.5,
   },
   payoutGrid: {
     flexDirection: "row",
     justifyContent: "space-between",
+    marginBottom: 8,
   },
   payoutColumn: {
     alignItems: "center",
   },
   payoutHeader: {
     color: "#9CA3AF",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "bold",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   payoutValue: {
     color: "#FFF",
-    fontSize: 12,
-    marginBottom: 6,
+    fontSize: 11,
+    marginBottom: 4,
     fontWeight: "600",
+  },
+  payoutNote: {
+    color: "#9CA3AF",
+    fontSize: 10,
+    textAlign: "center",
+    fontStyle: "italic",
   },
   // Estilos para las animaciones
   modalContainer: {
@@ -825,15 +932,6 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderColor: "#10B981",
   },
-  loseAnimation: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
-    padding: 30,
-    borderRadius: 20,
-    borderWidth: 4,
-    borderColor: "#EF4444",
-  },
   winAnimationText: {
     color: "#FFD700",
     fontSize: 24,
@@ -841,11 +939,27 @@ const styles = StyleSheet.create({
     marginTop: 10,
     textAlign: "center",
   },
-  loseAnimationText: {
-    color: "#EF4444",
-    fontSize: 24,
-    fontWeight: "bold",
-    marginTop: 10,
-    textAlign: "center",
+  // NUEVO: Estilos para el modal (EXACTAMENTE IGUAL QUE BINGO)
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  blockModalContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,  // 80% del ancho de la pantalla
+    height: height * 0.6, // 60% del alto de la pantalla
+    maxWidth: 400,       // Máximo ancho
+    maxHeight: 400,      // Máximo alto
+  },
+  disabledButton: {
+    backgroundColor: "#1A1A1A",
+    borderColor: "#333",
+    opacity: 0.5,
   },
 });

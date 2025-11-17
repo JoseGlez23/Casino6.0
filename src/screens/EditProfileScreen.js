@@ -18,15 +18,13 @@ import { supabase } from '../config/supabase';
 export default function EditProfileScreen({ navigation, route }) {
   const [userData, setUserData] = useState({
     nombre_completo: '',
-    email: '',
-    currentPassword: '',
     newPassword: '',
     confirmPassword: ''
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [userCoins, setUserCoins] = useState(null);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -48,31 +46,32 @@ export default function EditProfileScreen({ navigation, route }) {
     try {
       setLoading(true);
       
-      // Obtener usuario autenticado
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         showCustomAlert('Error', 'No se pudo obtener la información del usuario', 'error');
         return;
       }
 
-      // Obtener perfil del usuario desde la tabla usuarios
-      const { data: profile, error } = await supabase
+      // Obtener perfil del usuario
+      const { data: profile, error: profileError } = await supabase
         .from('usuarios')
         .select('*')
         .eq('id', user.id)
         .single();
 
-      if (error) {
-        console.error('Error cargando perfil:', error);
-        showCustomAlert('Error', 'No se pudo cargar el perfil del usuario', 'error');
-        return;
-      }
+      if (profileError) throw profileError;
+
+      // Obtener coins del usuario
+      const { data: coins, error: coinsError } = await supabase
+        .from('user_coins')
+        .select('maneki_coins, tickets')
+        .eq('user_id', user.id)
+        .single();
 
       setUserProfile(profile);
+      setUserCoins(coins);
       setUserData({
         nombre_completo: profile.nombre_completo || '',
-        email: profile.email || user.email || '',
-        currentPassword: '',
         newPassword: '',
         confirmPassword: ''
       });
@@ -91,24 +90,6 @@ export default function EditProfileScreen({ navigation, route }) {
     setModalVisible(true);
   };
 
-  const verifyCurrentPassword = async (email, password) => {
-    try {
-      // Intentar hacer login con la contraseña actual
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: password
-      });
-
-      if (error) {
-        return false; // Contraseña incorrecta
-      }
-      return true; // Contraseña correcta
-    } catch (error) {
-      console.error('Error verificando contraseña:', error);
-      return false;
-    }
-  };
-
   const handleSaveChanges = async () => {
     // Validaciones básicas
     if (!userData.nombre_completo.trim()) {
@@ -116,27 +97,13 @@ export default function EditProfileScreen({ navigation, route }) {
       return;
     }
 
-    if (!userData.email.trim()) {
-      showCustomAlert('Error', 'El email no puede estar vacío', 'error');
-      return;
-    }
-
-    // Validación de email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(userData.email)) {
-      showCustomAlert('Error', 'Por favor ingresa un email válido', 'error');
-      return;
-    }
-
+    // Verificar si hay cambios en el nombre
+    const hasNameChanged = userData.nombre_completo !== userProfile?.nombre_completo;
+    
     // Validación de contraseña si se intenta cambiar
-    const wantsToChangePassword = userData.newPassword || userData.confirmPassword || userData.currentPassword;
+    const wantsToChangePassword = userData.newPassword || userData.confirmPassword;
     
     if (wantsToChangePassword) {
-      if (!userData.currentPassword) {
-        showCustomAlert('Error', 'Debes ingresar tu contraseña actual para cambiar la contraseña', 'error');
-        return;
-      }
-
       if (userData.newPassword.length < 6) {
         showCustomAlert('Error', 'La nueva contraseña debe tener al menos 6 caracteres', 'error');
         return;
@@ -146,103 +113,85 @@ export default function EditProfileScreen({ navigation, route }) {
         showCustomAlert('Error', 'Las contraseñas nuevas no coinciden', 'error');
         return;
       }
-
-      // Verificar que la contraseña actual sea correcta
-      try {
-        setSaving(true);
-        const isCurrentPasswordValid = await verifyCurrentPassword(
-          userProfile.email, 
-          userData.currentPassword
-        );
-
-        if (!isCurrentPasswordValid) {
-          showCustomAlert('Error', 'La contraseña actual es incorrecta', 'error');
-          setSaving(false);
-          return;
-        }
-      } catch (error) {
-        console.error('Error verificando contraseña actual:', error);
-        showCustomAlert('Error', 'Error al verificar la contraseña actual', 'error');
-        setSaving(false);
-        return;
-      }
     }
 
+    // Si no hay cambios
+    if (!hasNameChanged && !wantsToChangePassword) {
+      showCustomAlert('Información', 'No hay cambios para guardar', 'info');
+      return;
+    }
+
+    setSaving(true);
+
     try {
-      setSaving(true);
-
-      // Obtener usuario actual
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        showCustomAlert('Error', 'Usuario no autenticado', 'error');
-        return;
+      if (!user) throw new Error('Usuario no autenticado');
+
+      let updatePromises = [];
+
+      // 1. Actualizar nombre en la tabla usuarios si cambió
+      if (hasNameChanged) {
+        const namePromise = supabase
+          .from('usuarios')
+          .update({
+            nombre_completo: userData.nombre_completo
+          })
+          .eq('id', user.id);
+        updatePromises.push(namePromise);
       }
 
-      // 1. Actualizar email en Auth (si cambió)
-      if (userData.email !== userProfile.email) {
-        const { error: emailError } = await supabase.auth.updateUser({
-          email: userData.email
-        });
-
-        if (emailError) {
-          console.error('Error actualizando email:', emailError);
-          showCustomAlert('Error', 'No se pudo actualizar el email: ' + emailError.message, 'error');
-          return;
-        }
-      }
-
-      // 2. Actualizar contraseña (si se proporcionó y se validó correctamente)
+      // 2. Actualizar contraseña si es necesario (NO ESPERAR RESPUESTA)
       if (wantsToChangePassword && userData.newPassword) {
-        const { error: passwordError } = await supabase.auth.updateUser({
+        // Hacer la actualización de contraseña pero no esperar por ella
+        supabase.auth.updateUser({
           password: userData.newPassword
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.log('Error actualizando contraseña en background:', error.message);
+          } else {
+            console.log('Contraseña actualizada exitosamente en background');
+          }
+        })
+        .catch(error => {
+          console.log('Error en background task:', error);
         });
+      }
 
-        if (passwordError) {
-          console.error('Error actualizando contraseña:', passwordError);
-          showCustomAlert('Error', 'No se pudo actualizar la contraseña: ' + passwordError.message, 'error');
-          return;
+      // Esperar solo por la actualización del nombre
+      if (updatePromises.length > 0) {
+        const results = await Promise.all(updatePromises);
+        const hasErrors = results.some(result => result.error);
+        
+        if (hasErrors) {
+          throw new Error('Error al actualizar el perfil');
         }
       }
 
-      // 3. Actualizar perfil en la tabla usuarios
-      const { error: profileError } = await supabase
-        .from('usuarios')
-        .update({
-          nombre_completo: userData.nombre_completo,
-          email: userData.email,
-          fecha_creacion: userProfile.fecha_creacion // Mantener la fecha original
-        })
-        .eq('id', user.id);
-
-      if (profileError) {
-        console.error('Error actualizando perfil:', profileError);
-        showCustomAlert('Error', 'No se pudo actualizar el perfil: ' + profileError.message, 'error');
-        return;
-      }
-
-      // Éxito
+      // Éxito inmediato - NO ESPERAR
+      setSaving(false);
       showCustomAlert(
         '¡Éxito!', 
-        'Tu perfil ha sido actualizado exitosamente', 
+        wantsToChangePassword 
+          ? 'Nombre actualizado exitosamente. La contraseña se está actualizando en segundo plano.' 
+          : 'Perfil actualizado exitosamente',
         'success',
-        () => navigation.goBack()
+        () => {
+          navigation.goBack();
+        }
       );
 
     } catch (error) {
-      console.error('Error general:', error);
-      showCustomAlert('Error', 'Ocurrió un error al guardar los cambios', 'error');
-    } finally {
+      console.error('Error:', error);
       setSaving(false);
+      showCustomAlert('Error', 'No se pudieron guardar los cambios: ' + error.message, 'error');
     }
   };
 
   const handleCancel = () => {
-    // Verificar si hay cambios sin guardar
     const hasChanges = 
       userData.nombre_completo !== userProfile?.nombre_completo ||
-      userData.email !== userProfile?.email ||
-      userData.newPassword ||
-      userData.currentPassword;
+      userData.newPassword;
 
     if (hasChanges) {
       showCustomAlert(
@@ -269,16 +218,19 @@ export default function EditProfileScreen({ navigation, route }) {
           styles.modalContainer,
           {
             backgroundColor: modalData.type === 'error' ? '#8B0000' : 
-                            modalData.type === 'warning' ? '#8B7500' : '#006400',
+                            modalData.type === 'warning' ? '#8B7500' : 
+                            modalData.type === 'info' ? '#1E3A8A' : '#006400',
             borderColor: modalData.type === 'error' ? '#FF6B6B' : 
-                        modalData.type === 'warning' ? '#FFD700' : '#32CD32'
+                        modalData.type === 'warning' ? '#FFD700' : 
+                        modalData.type === 'info' ? '#60A5FA' : '#32CD32'
           }
         ]}>
           <View style={styles.modalHeader}>
             <Ionicons 
               name={
                 modalData.type === 'error' ? 'close-circle' : 
-                modalData.type === 'warning' ? 'warning' : 'checkmark-circle'
+                modalData.type === 'warning' ? 'warning' : 
+                modalData.type === 'info' ? 'information-circle' : 'checkmark-circle'
               } 
               size={50} 
               color="#FFD700" 
@@ -289,20 +241,12 @@ export default function EditProfileScreen({ navigation, route }) {
           <Text style={styles.modalMessage}>{modalData.message}</Text>
           
           <View style={styles.modalButtonsContainer}>
-            {(modalData.type === 'warning' || modalData.type === 'error') && (
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.modalButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-            )}
-            
             <TouchableOpacity 
               style={[
                 styles.modalButton,
                 modalData.type === 'success' ? styles.modalButtonSuccess :
                 modalData.type === 'warning' ? styles.modalButtonWarning :
+                modalData.type === 'info' ? styles.modalButtonInfo :
                 styles.modalButtonError
               ]}
               onPress={() => {
@@ -312,9 +256,7 @@ export default function EditProfileScreen({ navigation, route }) {
                 }
               }}
             >
-              <Text style={styles.modalButtonText}>
-                {modalData.type === 'warning' ? 'Sí, Cancelar' : 'OK'}
-              </Text>
+              <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -336,8 +278,20 @@ export default function EditProfileScreen({ navigation, route }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={handleCancel}
+          disabled={saving}
+        >
+          <Ionicons name="arrow-back" size={24} color="#FFD700" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Editar Perfil</Text>
+        <View style={styles.placeholder} />
+      </View>
 
-      <ScrollView style={styles.scrollContainer}>
+      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
         {/* Información Personal */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Información Personal</Text>
@@ -353,17 +307,10 @@ export default function EditProfileScreen({ navigation, route }) {
             />
           </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Correo Electrónico</Text>
-            <TextInput
-              style={styles.input}
-              value={userData.email}
-              onChangeText={(text) => setUserData({...userData, email: text})}
-              placeholder="Ingresa tu email"
-              placeholderTextColor="#888"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+          {/* Email (solo lectura) */}
+          <View style={styles.readOnlyContainer}>
+            <Text style={styles.readOnlyLabel}>Correo Electrónico</Text>
+            <Text style={styles.readOnlyValue}>{userProfile?.email || 'No disponible'}</Text>
           </View>
         </View>
 
@@ -373,31 +320,6 @@ export default function EditProfileScreen({ navigation, route }) {
           <Text style={styles.sectionSubtitle}>
             Deja estos campos vacíos si no quieres cambiar tu contraseña
           </Text>
-          
-          {/* Contraseña Actual */}
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Contraseña Actual</Text>
-            <View style={styles.passwordInputContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                value={userData.currentPassword}
-                onChangeText={(text) => setUserData({...userData, currentPassword: text})}
-                placeholder="Ingresa tu contraseña actual"
-                placeholderTextColor="#888"
-                secureTextEntry={!showCurrentPassword}
-              />
-              <TouchableOpacity 
-                style={styles.eyeButton}
-                onPress={() => setShowCurrentPassword(!showCurrentPassword)}
-              >
-                <Ionicons
-                  name={showCurrentPassword ? "eye-outline" : "eye-off-outline"}
-                  size={20}
-                  color="#FFD700"
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
 
           {/* Nueva Contraseña */}
           <View style={styles.inputContainer}>
@@ -410,6 +332,8 @@ export default function EditProfileScreen({ navigation, route }) {
                 placeholder="Ingresa nueva contraseña (mínimo 6 caracteres)"
                 placeholderTextColor="#888"
                 secureTextEntry={!showNewPassword}
+                autoCorrect={false}
+                spellCheck={false}
               />
               <TouchableOpacity 
                 style={styles.eyeButton}
@@ -435,6 +359,8 @@ export default function EditProfileScreen({ navigation, route }) {
                 placeholder="Confirma tu nueva contraseña"
                 placeholderTextColor="#888"
                 secureTextEntry={!showConfirmPassword}
+                autoCorrect={false}
+                spellCheck={false}
               />
               <TouchableOpacity 
                 style={styles.eyeButton}
@@ -450,7 +376,7 @@ export default function EditProfileScreen({ navigation, route }) {
           </View>
         </View>
 
-        {/* Información adicional (solo lectura) */}
+        {/* Información de la Cuenta (solo lectura) */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Información de la Cuenta</Text>
           
@@ -461,8 +387,15 @@ export default function EditProfileScreen({ navigation, route }) {
           
           <View style={styles.readOnlyContainer}>
             <Text style={styles.readOnlyLabel}>Maneki Coins</Text>
-            <Text style={styles.readOnlyValue}>
-              {userProfile?.maneki_coins ? userProfile.maneki_coins.toLocaleString() : '0'}
+            <Text style={styles.coinsValue}>
+              {userCoins?.maneki_coins ? userCoins.maneki_coins.toLocaleString() : '0'}
+            </Text>
+          </View>
+
+          <View style={styles.readOnlyContainer}>
+            <Text style={styles.readOnlyLabel}>Tickets</Text>
+            <Text style={styles.ticketsValue}>
+              {userCoins?.tickets ? userCoins.tickets.toLocaleString() : '0'}
             </Text>
           </View>
           
@@ -477,7 +410,7 @@ export default function EditProfileScreen({ navigation, route }) {
         {/* Botones de acción */}
         <View style={styles.buttonsContainer}>
           <TouchableOpacity 
-            style={styles.cancelButton}
+            style={[styles.cancelButton, saving && styles.buttonDisabled]}
             onPress={handleCancel}
             disabled={saving}
           >
@@ -496,6 +429,9 @@ export default function EditProfileScreen({ navigation, route }) {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Espacio al final para mejor scroll */}
+        <View style={styles.bottomSpacer} />
       </ScrollView>
 
       {/* Modal personalizado */}
@@ -525,14 +461,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 15,
-    paddingTop: 40,
-    paddingBottom: 10,
+    paddingTop: 50,
+    paddingBottom: 15,
     backgroundColor: '#800000',
+    borderBottomWidth: 2,
+    borderBottomColor: '#FFD700',
   },
   headerTitle: {
-    color: '#fff',
+    color: '#FFD700',
     fontSize: 20,
     fontWeight: 'bold',
+    textAlign: 'center',
   },
   backButton: {
     padding: 5,
@@ -551,6 +490,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 2,
     borderColor: '#FFD700',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   sectionTitle: {
     color: '#FFD700',
@@ -570,7 +514,7 @@ const styles = StyleSheet.create({
   },
   readOnlyContainer: {
     marginBottom: 15,
-    padding: 10,
+    padding: 12,
     backgroundColor: '#8B0000',
     borderRadius: 8,
     borderWidth: 1,
@@ -592,6 +536,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
+  },
+  coinsValue: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  ticketsValue: {
+    color: '#32CD32',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   input: {
     backgroundColor: '#8B0000',
@@ -622,17 +576,20 @@ const styles = StyleSheet.create({
   buttonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 30,
+    marginBottom: 20,
+    gap: 10,
   },
   cancelButton: {
     flex: 1,
     backgroundColor: '#B22222',
     padding: 15,
     borderRadius: 10,
-    marginRight: 10,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#FF6B6B',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   cancelButtonText: {
     color: '#fff',
@@ -644,7 +601,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#32CD32',
     padding: 15,
     borderRadius: 10,
-    marginLeft: 10,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#FFD700',
@@ -657,6 +613,9 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  bottomSpacer: {
+    height: 20,
   },
   // Estilos para el modal personalizado
   modalOverlay: {
@@ -704,7 +663,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     width: '100%',
-    gap: 10,
   },
   modalButton: {
     paddingVertical: 12,
@@ -715,14 +673,14 @@ const styles = StyleSheet.create({
     minWidth: 100,
     alignItems: 'center',
   },
-  modalButtonCancel: {
-    backgroundColor: '#8B0000',
-  },
   modalButtonSuccess: {
     backgroundColor: '#006400',
   },
   modalButtonWarning: {
     backgroundColor: '#8B7500',
+  },
+  modalButtonInfo: {
+    backgroundColor: '#1E3A8A',
   },
   modalButtonError: {
     backgroundColor: '#8B0000',

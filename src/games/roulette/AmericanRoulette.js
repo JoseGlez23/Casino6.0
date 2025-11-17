@@ -14,13 +14,145 @@ import {
   Modal,
   Dimensions,
   Image,
+  BackHandler,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, { Circle, G, Text as SvgText, Path } from "react-native-svg";
 import { useCoins } from "../../context/CoinsContext";
 import { Audio } from "expo-av";
 
-const { width: screenWidth } = Dimensions.get("window");
+const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
+
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
+
+  return (
+    <TouchableOpacity
+      style={styles.tabBlocker}
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>Termina el juego primero</Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        handleClose();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  const handleClose = () => {
+    // Animación de salida
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onClose();
+    });
+  };
+
+  const handleModalPress = () => {
+    handleClose();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlayTransparent}
+        activeOpacity={1}
+        onPress={handleModalPress}
+      >
+        <Animated.View
+          ref={modalRef}
+          style={[
+            styles.blockModalContainerTransparent,
+            {
+              transform: [{ scale: scaleAnim }, { translateY: slideAnim }],
+              opacity: fadeAnim,
+            },
+          ]}
+        >
+          <Image
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 // Hook de sonidos profesional
 const useGameSounds = () => {
@@ -414,13 +546,17 @@ export default function AmericanRoulette({ navigation }) {
   const [spinning, setSpinning] = useState(false);
   const [betStep, setBetStep] = useState("amount");
   const [ticketsWon, setTicketsWon] = useState(0);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+
+  // NUEVOS ESTADOS PARA BLOQUEO
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
 
   // New states for marking the result and index
   const [landedNumber, setLandedNumber] = useState(null);
   const [landedIndex, setLandedIndex] = useState(null);
 
   const wheelAnim = useRef(new Animated.Value(0)).current;
-  // ballAnim kept for compatibility (not used for visible ball orbit)
   const ballAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -428,11 +564,84 @@ export default function AmericanRoulette({ navigation }) {
   const pointerBallAnim = useRef(new Animated.Value(0)).current;
   const pointerBallLoopRef = useRef(null);
 
+  // Referencias para manejo de navegación
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
+
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress
+        ? { display: "none" }
+        : {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          },
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation
+        .getParent()
+        ?.addListener("tabPress", (e) => {
+          e.preventDefault();
+          setShowTabBlocker(true);
+          setTimeout(() => setShowTabBlocker(false), 2000);
+        });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          },
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (spinning || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener("beforeRemove", (e) => {
+      if (spinning || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, spinning, gameInProgress]);
+
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
   // Configuración de la ruleta
   const wheelSize = Math.min(screenWidth - 40, 320);
   const center = wheelSize / 2;
   const wheelRadius = wheelSize / 2 - 10;
-  const ballTrackRadius = wheelRadius - 15;
   const segmentAngle = (2 * Math.PI) / SEGMENTS.length;
   const segmentDegrees = 360 / SEGMENTS.length;
 
@@ -577,6 +786,7 @@ export default function AmericanRoulette({ navigation }) {
     if (spinning || !betAmount || !betType) return;
 
     setSpinning(true);
+    setGameInProgress(true); // ACTIVAR BLOQUEO
     setLandedNumber(null);
     setLandedIndex(null);
 
@@ -598,7 +808,7 @@ export default function AmericanRoulette({ navigation }) {
     // --- CÁLCULO EXACTO PARA QUE EL NÚMERO GANADOR QUEDE BAJO EL PUNTERO ----
     // rotationOffset: cantidad en grados para alinear el medio del segmento con el tope (-90°)
     const rotationOffset =
-      (360 - ((winningIndex + 0.5) * segmentDegrees) % 360) % 360;
+      (360 - (((winningIndex + 0.5) * segmentDegrees) % 360)) % 360;
 
     const wheelTo = spins * 360 + rotationOffset;
     const ballTo = -Math.round(ballSpins * 360) - 90;
@@ -688,6 +898,7 @@ export default function AmericanRoulette({ navigation }) {
         setSelectedNumber(null);
         setBetStep("amount");
         setSpinning(false);
+        setGameInProgress(false); // DESACTIVAR BLOQUEO
         setTicketsWon(0);
 
         // dejamos landedNumber/landedIndex unos momentos más para que el usuario vea el resultado
@@ -793,6 +1004,24 @@ export default function AmericanRoulette({ navigation }) {
       <WinAnimation show={showWinAnim} ticketsWon={ticketsWon} />
       <LoseAnimation show={showLoseAnim} />
 
+      <BlockModal visible={showBlockModal} onClose={handleCloseBlockModal} />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker
+        isVisible={showTabBlocker}
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -830,13 +1059,15 @@ export default function AmericanRoulette({ navigation }) {
             </View>
           </View>
 
-          {/* Título centrado */}
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}></Text>
+          {/* Badge de advertencia cuando está girando */}
+          <View style={styles.emptySpace}>
+            {spinning && (
+              <View style={styles.warningBadge}>
+                <Ionicons name="warning" size={14} color="#FFD700" />
+                <Text style={styles.warningText}>GIRANDO</Text>
+              </View>
+            )}
           </View>
-
-          {/* Espacio vacío para balancear el diseño */}
-          <View style={styles.emptySpace} />
         </View>
 
         {/* Información de apuesta actual */}
@@ -1181,6 +1412,23 @@ const styles = StyleSheet.create({
   },
   emptySpace: {
     width: 80,
+    alignItems: "flex-end",
+  },
+  warningBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    gap: 4,
+  },
+  warningText: {
+    color: "#FFD700",
+    fontSize: 10,
+    fontWeight: "bold",
   },
   currentBetInfo: {
     flexDirection: "row",
@@ -1533,5 +1781,74 @@ const styles = StyleSheet.create({
     color: "#10B981",
     fontSize: 12,
     fontWeight: "bold",
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: "#1a1a1a",
+    padding: 24,
+    borderRadius: 16,
+    alignItems: "center",
+    borderWidth: 3,
+    borderColor: "#FFD700",
+    maxWidth: "80%",
+  },
+  tabBlockerText: {
+    color: "#FFD700",
+    fontSize: 18,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: "normal",
+    color: "#FFF",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: "transparent",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  probabilityImageLarge: {
+    width: screenWidth * 0.8,
+    height: screenHeight * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
   },
 });

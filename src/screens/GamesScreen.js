@@ -237,12 +237,12 @@ export default function GamesScreen({ navigation }) {
     }
   ], []);
 
-  const categories = [
+const categories = [
     { id: 'all', name: 'Todos', icon: 'game-controller' },
-    { id: 'cards', name: 'Cartas', icon: 'card' },
+    { id: 'cards', name: 'Cartas', icon: 'diamond' }, // ♦ Diamante de poker
     { id: 'dice', name: 'Dados', icon: 'cube' },
     { id: 'roulette', name: 'Ruletas', icon: 'disc' },
-    { id: 'wheels', name: 'Ruedas', icon: 'help-circle' },
+    { id: 'wheels', name: 'Ruedas', icon: 'refresh-circle' }, // 🔄 Rueda giratoria
     { id: 'table', name: 'Mesa', icon: 'grid' },
     { id: 'specialty', name: 'Especiales', icon: 'star' },
   ];

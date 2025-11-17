@@ -1,3 +1,4 @@
+// ProfileScreen.js
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -12,6 +13,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   authenticateBiometric,
   saveBiometricEnabled,
@@ -37,16 +39,20 @@ export default function ProfileScreen({ navigation }) {
     onConfirm: null,
   });
 
+  // BONO DIARIO (reinicia a medianoche)
+  const [bonusAvailable, setBonusAvailable] = useState(true);
+  const [bonusTimeText, setBonusTimeText] = useState("");
+
   // NUEVA FUNCIÓN: Copiar ID al portapapeles
   const copyToClipboard = async (text) => {
     try {
       await Clipboard.setStringAsync(text);
-      Alert.alert("✅ ID Copiado", "El ID ha sido copiado al portapapeles", [
+      Alert.alert(" ID Copiado", "El ID ha sido copiado al portapapeles", [
         { text: "Aceptar" },
       ]);
     } catch (error) {
       console.error("Error copiando al portapapeles:", error);
-      Alert.alert("❌ Error", "No se pudo copiar el ID", [{ text: "Aceptar" }]);
+      Alert.alert(" Error", "No se pudo copiar el ID", [{ text: "Aceptar" }]);
     }
   };
 
@@ -118,15 +124,63 @@ export default function ProfileScreen({ navigation }) {
     });
   };
 
-  // Carga inicial
+  // === Bono diario: calculadora precisa hasta medianoche (horas, minutos, segundos) ===
+  const updateTimeUntilMidnight = () => {
+    const now = new Date();
+    const midnight = new Date();
+    midnight.setHours(24, 0, 0, 0); // siguiente medianoche local
+    const diff = midnight - now;
+    if (diff <= 0) {
+      setBonusAvailable(true);
+      setBonusTimeText("🎁 ¡Bono disponible ahora!");
+      return;
+    }
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    const hText = hours === 1 ? "hora" : "horas";
+    const mText = minutes === 1 ? "minuto" : "minutos";
+    const sText = seconds === 1 ? "segundo" : "segundos";
+
+    setBonusTimeText(
+      `Disponible en ${hours} ${hText}, ${minutes} ${mText} y ${seconds} ${sText}`
+    );
+  };
+
+  const checkBonusAvailability = async () => {
+    try {
+      const lastClaim = await AsyncStorage.getItem("lastBonusDay");
+      const today = new Date().toDateString();
+      if (!lastClaim || lastClaim !== today) {
+        setBonusAvailable(true);
+        setBonusTimeText(" ¡Bono disponible ahora!");
+      } else {
+        setBonusAvailable(false);
+        updateTimeUntilMidnight();
+      }
+    } catch (e) {
+      console.warn("Error al comprobar bono diario", e);
+      setBonusAvailable(true);
+      setBonusTimeText(" ¡Bono disponible ahora!");
+    }
+  };
+
+  // Carga inicial + comprobación del bono cada segundo (para segundos en el contador)
   useEffect(() => {
     loadUserProfile();
+    checkBonusAvailability();
+    const interval = setInterval(() => {
+      checkBonusAvailability();
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // Recargar cuando la pantalla recibe foco
   useFocusEffect(
     React.useCallback(() => {
       loadUserProfile();
+      checkBonusAvailability();
     }, [])
   );
 
@@ -157,27 +211,50 @@ export default function ProfileScreen({ navigation }) {
     await saveRefreshToken(token);
     await saveBiometricEnabled(true);
     setFingerEnabled(true);
-    showCustomAlert("✅ Hecho!", "Huella Activada", "success");
+    showCustomAlert("Hecho!", "Huella Activada", "success");
   };
 
   const disableFingerprint = async () => {
     await clearSavedRefreshToken();
     await saveBiometricEnabled(false);
     setFingerEnabled(false);
-    showCustomAlert("❌ Huella desactivada", "Se usará contraseña", "warning");
+    showCustomAlert("Huella desactivada", "Se usará contraseña", "warning");
   };
 
-  const handleDailyBonus = () => {
-    const bonusAmount = 1000;
-    const newBalance = addCoins(bonusAmount, "Bono diario");
-    showCustomAlert(
-      "¡Bono Diario! 🎁",
-      `Has recibido ${bonusAmount.toLocaleString()} Maneki Coins.\n\nTu nuevo saldo es: ${newBalance.toLocaleString()} MC`,
-      "success"
-    );
+  //  Reclamar bono diario (guardado por día, reinicio a medianoche)
+  const handleDailyBonus = async () => {
+    try {
+      const today = new Date().toDateString();
+      const lastClaim = await AsyncStorage.getItem("lastBonusDay");
+      if (lastClaim === today) {
+        return showCustomAlert(
+          " Espera",
+          "Ya reclamaste tu bono de hoy. Inténtalo mañana.",
+          "warning"
+        );
+      }
+
+      const bonusAmount = 1000;
+      const newBalance = addCoins(bonusAmount, "Bono diario");
+
+      // Guardar que reclamó hoy (se compara por toDateString para reinicio a medianoche)
+      await AsyncStorage.setItem("lastBonusDay", today);
+
+      setBonusAvailable(false);
+      updateTimeUntilMidnight();
+
+      showCustomAlert(
+        "¡Bono Diario! ",
+        `Has recibido ${bonusAmount.toLocaleString()} Maneki Coins.\n\nTu nuevo saldo es: ${newBalance.toLocaleString()} MC`,
+        "success"
+      );
+    } catch (e) {
+      console.error("Error en handleDailyBonus", e);
+      showCustomAlert("Error", "No se pudo procesar el bono. Inténtalo más tarde.", "error");
+    }
   };
 
-  // ✅ SOLO HUELLA DIGITAL - Eliminados INE y Escaneo Facial
+  //  SOLO HUELLA DIGITAL - Eliminados INE y Escaneo Facial
   const verificationSteps = [
     {
       icon: "finger-print",
@@ -196,12 +273,12 @@ export default function ProfileScreen({ navigation }) {
     }
     showCustomAlert(
       "🚧 Próximamente",
-      "Esta función estará disponible pronto ✅"
+      "Esta función estará disponible pronto "
     );
   };
 
-  // ❌ QUITADO: "Recargar Fichas" del menú
-  // ✅ AGREGADO: "Soporte" entre "Bono Diario" y "Cerrar Sesión"
+  //  QUITADO: "Recargar Fichas" del menú
+  //  AGREGADO: "Soporte" entre "Bono Diario" y "Cerrar Sesión"
   const menuOptions = [
     { icon: "person", title: "Editar Perfil", screen: "EditProfile" },
     { icon: "wallet", title: "Mi Cartera", screen: "Wallet" },
@@ -230,12 +307,12 @@ export default function ProfileScreen({ navigation }) {
       case "EditProfile":
         navigation.navigate("EditProfile");
         break;
-      case "Support": // ✅ NUEVO CASO PARA SOPORTE
+      case "Support": //  NUEVO CASO PARA SOPORTE
         navigation.navigate("Soporte");
         break;
       default:
         showCustomAlert(
-          "🚧 Próximamente",
+          " Próximamente",
           `${item.title} estará disponible pronto`
         );
     }
@@ -303,7 +380,7 @@ export default function ProfileScreen({ navigation }) {
                 { color: fingerEnabled ? "#32CD32" : "#FFD700" },
               ]}
             >
-              {fingerEnabled ? "Verificado ✅" : "Pendiente ❌"}
+              {fingerEnabled ? "Verificado " : "Pendiente "}
             </Text>
           </View>
 
@@ -322,13 +399,21 @@ export default function ProfileScreen({ navigation }) {
                 <Text style={styles.balanceButtonText}>RECARGAR</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.balanceButton}
+                style={[styles.balanceButton, !bonusAvailable && { backgroundColor: "#555" }]}
                 onPress={handleDailyBonus}
+                disabled={!bonusAvailable}
               >
                 <Ionicons name="gift" size={16} color="#000" />
                 <Text style={styles.balanceButtonText}>BONO</Text>
               </TouchableOpacity>
             </View>
+
+            {/* CONTADOR DE BONO - debajo del botón */}
+            {!bonusAvailable ? (
+              <Text style={styles.countdownText}>Próximo bono: {bonusTimeText}</Text>
+            ) : (
+              <Text style={styles.countdownTextReady}> ¡Bono disponible ahora!</Text>
+            )}
           </View>
         </View>
 
@@ -398,15 +483,16 @@ export default function ProfileScreen({ navigation }) {
           {menuOptions.map((item, i) => (
             <TouchableOpacity
               key={i}
-              style={styles.menuItem}
+              style={[styles.menuItem, item.screen === "DailyBonus" && !bonusAvailable && { opacity: 0.6 }]}
               onPress={() => handleMenuPress(item)}
+              disabled={item.screen === "DailyBonus" && !bonusAvailable}
             >
               <View style={styles.menuLeft}>
                 <View
                   style={[
                     styles.menuIconContainer,
                     item.screen === "DailyBonus" && styles.bonusIconContainer,
-                    item.screen === "Support" && styles.supportIconContainer, // ✅ NUEVO ESTILO PARA SOPORTE
+                    item.screen === "Support" && styles.supportIconContainer, //  NUEVO ESTILO PARA SOPORTE
                   ]}
                 >
                   <Ionicons
@@ -417,7 +503,7 @@ export default function ProfileScreen({ navigation }) {
                         ? "#000"
                         : item.screen === "Support"
                         ? "#000"
-                        : "#FFD700" // ✅ COLOR PARA SOPORTE
+                        : "#FFD700" //  COLOR PARA SOPORTE
                     }
                   />
                 </View>
@@ -426,7 +512,7 @@ export default function ProfileScreen({ navigation }) {
                   {item.screen === "DailyBonus" && (
                     <Text style={styles.menuSubtext}>+1,000 MC gratis</Text>
                   )}
-                  {item.screen === "Support" && ( // ✅ NUEVO SUBTEXTO PARA SOPORTE
+                  {item.screen === "Support" && ( //  NUEVO SUBTEXTO PARA SOPORTE
                     <Text style={styles.menuSubtext}>Ayuda y asistencia</Text>
                   )}
                 </View>
@@ -908,4 +994,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
+  countdownText: {
+    color: "#FFD700",
+    fontSize: 14,
+    marginTop: 10,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  countdownTextReady: {
+    color: "#32CD32",
+    fontSize: 14,
+    marginTop: 10,
+    fontWeight: "700",
+    textAlign: "center",
+  }
 });

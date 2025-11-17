@@ -1,5 +1,5 @@
 // src/games/cards/War.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
   Vibration,
   Alert,
   Image,
+  BackHandler,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
@@ -20,7 +22,143 @@ import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
 
-// Hook de sonidos para War - IGUAL QUE EN POKER
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
+
+  return (
+    <TouchableOpacity 
+      style={styles.tabBlocker} 
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>
+            Termina el juego primero
+          </Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        handleClose();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  const handleClose = () => {
+    // Animación de salida
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onClose();
+    });
+  };
+
+  const handleModalPress = () => {
+    handleClose();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlayTransparent} 
+        activeOpacity={1}
+        onPress={handleModalPress}
+      >
+        <Animated.View 
+          ref={modalRef}
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
+
+// Hook de sonidos para War
 const useGameSounds = () => {
   const [sounds, setSounds] = useState({});
 
@@ -169,7 +307,7 @@ const WinAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="trophy" size={70} color="#FFD700" />
+      <Ionicons name="trophy" size={60} color="#FFD700" />
       <Text style={styles.winText}>VICTORIA</Text>
       <Text style={styles.winSubtext}>Ganas Tickets</Text>
     </Animated.View>
@@ -219,7 +357,7 @@ const WarAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="flash" size={70} color="#F59E0B" />
+      <Ionicons name="flash" size={60} color="#F59E0B" />
       <Text style={styles.warText}>GUERRA</Text>
       <Text style={styles.warSubtext}>Ganas Tickets x2</Text>
     </Animated.View>
@@ -269,22 +407,86 @@ const LoseAnimation = ({ show }) => {
         },
       ]}
     >
-      <Ionicons name="sad-outline" size={70} color="#EF4444" />
+      <Ionicons name="sad-outline" size={60} color="#EF4444" />
       <Text style={styles.loseText}>DERROTA</Text>
       <Text style={styles.loseSubtext}>Pierdes apuesta</Text>
     </Animated.View>
   );
 };
 
-// Tabla de premios de tickets para War - SOLO TICKETS, NO MANEKI COINS
+// Componente de Suerte Aumentada - Solo imagen
+const LuckBoostImage = ({ show, winStreak, onHide }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+
+  useEffect(() => {
+    if (show) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 150,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        onHide();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    } else {
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+    }
+  }, [show]);
+
+  if (!show) return null;
+
+  const getImageSource = () => {
+    if (winStreak >= 8) {
+      return require("../../assets/suertex50.png");
+    } else if (winStreak >= 5) {
+      return require("../../assets/suertex20.png");
+    } else {
+      return require("../../assets/suertex10.png");
+    }
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.luckBoostImageContainer,
+        {
+          opacity: fadeAnim,
+          transform: [{ scale: scaleAnim }],
+        },
+      ]}
+    >
+      <Image 
+        source={getImageSource()} 
+        style={styles.luckBoostImageLarge}
+        resizeMode="contain"
+      />
+    </Animated.View>
+  );
+};
+
+// Tabla de premios de tickets para War - VALORES CONSISTENTES CON OTROS JUEGOS
 const getTicketRewards = (betAmount, isWar = false, isWin = false) => {
   if (!isWin) return 0;
 
+  // Mismos valores base que otros juegos para mantener consistencia
   const rewards = {
-    50: isWar ? 100 : 50,
-    100: isWar ? 200 : 100,
-    250: isWar ? 500 : 250,
-    500: isWar ? 1000 : 500,
+    50: isWar ? 120 : 60,
+    100: isWar ? 240 : 120,
+    250: isWar ? 600 : 300,
+    500: isWar ? 1200 : 600,
   };
   return rewards[betAmount] || 0;
 };
@@ -293,7 +495,6 @@ export default function War({ navigation }) {
   const {
     manekiCoins,
     tickets,
-    addCoins,
     subtractCoins,
     addTickets,
     canAfford,
@@ -305,16 +506,88 @@ export default function War({ navigation }) {
   const [dealerCard, setDealerCard] = useState(null);
   const [gameState, setGameState] = useState("betting");
   const [result, setResult] = useState("");
-  const [winAmount, setWinAmount] = useState(0);
   const [isWar, setIsWar] = useState(false);
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showWarAnimation, setShowWarAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [ticketsWon, setTicketsWon] = useState(0);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  
+  // Estados CORREGIDOS: ahora es racha de victorias
+  const [winStreak, setWinStreak] = useState(0);
+  const [showLuckBoost, setShowLuckBoost] = useState(false);
+
+  // NUEVOS ESTADOS para controlar la navegación
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
 
   const cardAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
+
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR - NUEVO
+  useEffect(() => {
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowTabBlocker(true);
+        setTimeout(() => setShowTabBlocker(false), 2000);
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso - CORREGIDO
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameState === "dealing" || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener('beforeRemove', (e) => {
+      if (gameState === "dealing" || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
+    };
+  }, [navigation, gameState, gameInProgress]);
 
   useEffect(() => {
     Audio.setAudioModeAsync({
@@ -325,6 +598,11 @@ export default function War({ navigation }) {
       playThroughEarpieceAndroid: false,
     });
   }, []);
+
+  // Función para determinar si el jugador gana automáticamente (5% de probabilidad)
+  const shouldAutoWin = () => {
+    return Math.random() < 0.05;
+  };
 
   const cardValues = {
     2: 2,
@@ -401,11 +679,35 @@ export default function War({ navigation }) {
     setTimeout(() => setShowLoseAnimation(false), 2500);
   };
 
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
+  const handleHideLuckBoost = () => {
+    setShowLuckBoost(false);
+  };
+
+  // Verificar y mostrar boost de suerte basado en racha de VICTORIAS
+  const checkAndShowLuckBoost = () => {
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+    }
+  };
+
   const startGame = async (betAmount) => {
     if (!canAfford(betAmount)) {
       await playSound("error");
       Alert.alert("Fondos Insuficientes", "No tienes suficientes Maneki Coins");
       return;
+    }
+
+    // Marcar que el juego está en progreso
+    setGameInProgress(true);
+
+    // Mostrar boost de suerte si hay racha de victorias
+    if (winStreak >= 3) {
+      setShowLuckBoost(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     setBet(betAmount);
@@ -423,8 +725,35 @@ export default function War({ navigation }) {
     setTicketsWon(0);
 
     setTimeout(async () => {
-      const newPlayerCard = dealCard();
-      const newDealerCard = dealCard();
+      const autoWin = shouldAutoWin();
+      let newPlayerCard, newDealerCard;
+
+      if (autoWin) {
+        // Victoria automática - generar cartas que aseguren la victoria
+        // Para War, hacer que el jugador tenga una carta más alta
+        const playerValue = Math.floor(Math.random() * 8) + 7; // 7-14 (alta probabilidad de ganar)
+        const dealerValue = Math.floor(Math.random() * 6) + 2; // 2-7 (baja probabilidad de ganar)
+        
+        // Convertir valores numéricos a strings de carta
+        const valueKeys = Object.keys(cardValues);
+        const playerValueString = valueKeys.find(key => cardValues[key] === playerValue) || 'A';
+        const dealerValueString = valueKeys.find(key => cardValues[key] === dealerValue) || '7';
+        
+        newPlayerCard = { 
+          value: playerValueString, 
+          suit: suits[Math.floor(Math.random() * suits.length)], 
+          numeric: playerValue 
+        };
+        newDealerCard = { 
+          value: dealerValueString, 
+          suit: suits[Math.floor(Math.random() * suits.length)], 
+          numeric: dealerValue 
+        };
+      } else {
+        // Juego normal
+        newPlayerCard = dealCard();
+        newDealerCard = dealCard();
+      }
 
       setPlayerCard(newPlayerCard);
       setDealerCard(newDealerCard);
@@ -433,35 +762,38 @@ export default function War({ navigation }) {
       setTimeout(async () => await playSound("card"), 200);
 
       setTimeout(
-        () => determineResult(newPlayerCard, newDealerCard, betAmount),
+        () => determineResult(newPlayerCard, newDealerCard, betAmount, autoWin),
         600
       );
     }, 400);
   };
 
-  const determineResult = async (playerCard, dealerCard, betAmount) => {
-    let finalWinAmount = 0;
+  const determineResult = async (playerCard, dealerCard, betAmount, autoWin = false) => {
     let resultMessage = "";
     let war = false;
     let isWin = false;
 
-    if (playerCard.numeric > dealerCard.numeric) {
-      finalWinAmount = betAmount * 2;
-      resultMessage = `VICTORIA`;
+    if (autoWin || playerCard.numeric > dealerCard.numeric) {
+      resultMessage = autoWin ? `¡VICTORIA SORPRESA!` : `VICTORIA`;
       isWin = true;
       await playSound("win");
       triggerWinAnimation();
+      // AUMENTAR racha de victorias
+      setWinStreak(prev => prev + 1);
     } else if (playerCard.numeric < dealerCard.numeric) {
       resultMessage = `DERROTA`;
       await playSound("lose");
       triggerLoseAnimation();
+      // RESET racha de victorias al perder
+      setWinStreak(0);
     } else {
       war = true;
       isWin = true;
-      finalWinAmount = betAmount * 4;
-      resultMessage = `GUERRA`;
+      resultMessage = `¡GUERRA!`;
       await playSound("win");
       triggerWarAnimation();
+      // AUMENTAR racha de victorias (la guerra también cuenta como victoria)
+      setWinStreak(prev => prev + 1);
     }
 
     // SOLO GANAS TICKETS, NO MANEKI COINS
@@ -473,12 +805,19 @@ export default function War({ navigation }) {
       }
     }
 
-    setWinAmount(finalWinAmount);
     setResult(resultMessage);
     setIsWar(war);
     setGameState("result");
+    setGameInProgress(false); // Terminar el estado de juego en progreso
     animateResult();
     pulseAnimation();
+
+    // Verificar si debemos mostrar el boost de suerte después de una VICTORIA
+    if (isWin) {
+      setTimeout(() => {
+        checkAndShowLuckBoost();
+      }, 1500);
+    }
   };
 
   const resetGame = async () => {
@@ -487,12 +826,13 @@ export default function War({ navigation }) {
     setDealerCard(null);
     setGameState("betting");
     setResult("");
-    setWinAmount(0);
     setIsWar(false);
     setShowWinAnimation(false);
     setShowWarAnimation(false);
     setShowLoseAnimation(false);
     setTicketsWon(0);
+    setGameInProgress(false); // Asegurar que se reinicie el estado
+    // NO resetear la racha de victorias aquí
     await playSound("click");
   };
 
@@ -554,6 +894,33 @@ export default function War({ navigation }) {
       <WinAnimation show={showWinAnimation} />
       <WarAnimation show={showWarAnimation} />
       <LoseAnimation show={showLoseAnimation} />
+      
+      <BlockModal
+        visible={showBlockModal}
+        onClose={handleCloseBlockModal}
+      />
+
+      <LuckBoostImage 
+        show={showLuckBoost} 
+        winStreak={winStreak}
+        onHide={handleHideLuckBoost}
+      />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker 
+        isVisible={showTabBlocker} 
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -579,10 +946,13 @@ export default function War({ navigation }) {
               />
               <Text style={styles.balanceText}>{tickets.toLocaleString()}</Text>
             </View>
-          </View>
-
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}></Text>
+            {/* Indicador de RACHA DE VICTORIAS */}
+            {winStreak > 0 && (
+              <View style={styles.streakIndicator}>
+                <Ionicons name="trophy" size={14} color="#FFD700" />
+                <Text style={styles.streakText}>Racha: {winStreak}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.emptySpace} />
@@ -618,12 +988,12 @@ export default function War({ navigation }) {
                 ],
                 borderColor: isWar
                   ? "#F59E0B"
-                  : winAmount > 0
+                  : ticketsWon > 0
                   ? "#10B981"
                   : "#EF4444",
                 backgroundColor: isWar
                   ? "rgba(245, 158, 11, 0.1)"
-                  : winAmount > 0
+                  : ticketsWon > 0
                   ? "rgba(16, 185, 129, 0.1)"
                   : "rgba(239, 68, 68, 0.1)",
               },
@@ -635,7 +1005,7 @@ export default function War({ navigation }) {
                 {
                   color: isWar
                     ? "#F59E0B"
-                    : winAmount > 0
+                    : ticketsWon > 0
                     ? "#10B981"
                     : "#EF4444",
                 },
@@ -689,6 +1059,11 @@ export default function War({ navigation }) {
                     <Text style={styles.ticketRewardText}>
                       +{getTicketRewards(amount, false, true)} Tickets
                     </Text>
+                    {isWar && (
+                      <Text style={styles.warRewardText}>
+                        Guerra: +{getTicketRewards(amount, true, true)} Tickets
+                      </Text>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
@@ -773,6 +1148,7 @@ const styles = StyleSheet.create({
   balances: {
     flexDirection: "row",
     gap: 12,
+    alignItems: "center",
   },
   balanceItem: {
     flexDirection: "row",
@@ -795,20 +1171,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
+  streakIndicator: {
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.6)", // Verde para victorias
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    gap: 4,
   },
-  title: {
+  streakText: {
     color: "#FFD700",
-    fontSize: 20,
+    fontSize: 11,
     fontWeight: "bold",
-    letterSpacing: 1,
   },
   emptySpace: {
-    width: 80,
+    width: 70,
   },
   cardsComparison: {
     flexDirection: "row",
@@ -963,6 +1343,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
+  warRewardText: {
+    color: "#F59E0B",
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: "600",
+  },
   currentBet: {
     color: "#FFD700",
     fontSize: 15,
@@ -1064,17 +1450,17 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: "50%",
     left: "50%",
-    marginLeft: -100,
-    marginTop: -80,
+    marginLeft: -80,
+    marginTop: -60,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
     backgroundColor: "rgba(0, 0, 0, 0.95)",
-    padding: 25,
-    borderRadius: 20,
-    borderWidth: 4,
-    width: 200,
-    height: 160,
+    padding: 20,
+    borderRadius: 15,
+    borderWidth: 3,
+    width: 160,
+    height: 120,
   },
   winAnimation: {
     borderColor: "#FFD700",
@@ -1087,44 +1473,129 @@ const styles = StyleSheet.create({
   },
   winText: {
     color: "#FFD700",
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-    marginTop: 10,
+    marginTop: 8,
   },
   warText: {
     color: "#F59E0B",
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-    marginTop: 10,
+    marginTop: 8,
   },
   loseText: {
     color: "#EF4444",
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-    marginTop: 10,
+    marginTop: 8,
   },
   winSubtext: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "600",
-    marginTop: 6,
+    marginTop: 4,
     textAlign: "center",
   },
   warSubtext: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "600",
-    marginTop: 6,
+    marginTop: 4,
     textAlign: "center",
   },
   loseSubtext: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "600",
-    marginTop: 6,
+    marginTop: 4,
     textAlign: "center",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,  // 80% del ancho de la pantalla
+    height: height * 0.6, // 60% del alto de la pantalla
+    maxWidth: 400,       // Máximo ancho
+    maxHeight: 400,      // Máximo alto
+  },
+  // Estilos para el sistema de suerte aumentada (solo imagen)
+  luckBoostImageContainer: {
+    position: "absolute",
+    top: "30%",
+    left: "10%",
+    right: "10%",
+    zIndex: 1001,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  luckBoostImageLarge: {
+    width: width * 0.7,  // 70% del ancho de la pantalla
+    height: height * 0.5, // 50% del alto de la pantalla
+    maxWidth: 350,       // Máximo ancho
+    maxHeight: 300,      // Máximo alto
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: '#1a1a1a',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFD700',
+    maxWidth: '80%',
+  },
+  tabBlockerText: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: 'normal',
+    color: '#FFF',
   },
 });

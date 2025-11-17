@@ -1,5 +1,5 @@
 // src/games/dice/Craps.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -10,136 +10,149 @@ import {
   Dimensions,
   ScrollView,
   SafeAreaView,
-  Vibration,
-  Alert,
+  BackHandler,
+  Modal,
   Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../../context/CoinsContext";
-import { Audio } from "expo-av";
 
 const { width, height } = Dimensions.get("window");
-const isSmallDevice = width < 375;
 
-// Tabla de premios de tickets para Craps
-const getTicketRewards = (betAmount, isNaturalWin = false) => {
-  const rewards = {
-    50: isNaturalWin ? 90 : 60,
-    100: isNaturalWin ? 180 : 120,
-    250: isNaturalWin ? 450 : 300,
-    500: isNaturalWin ? 900 : 600,
-  };
-  return rewards[betAmount] || 0;
+// Componente para bloquear la barra de navegación
+const TabBlocker = ({ isVisible, onPress }) => {
+  if (!isVisible) return null;
+
+  return (
+    <TouchableOpacity 
+      style={styles.tabBlocker} 
+      onPress={onPress}
+      activeOpacity={1}
+    >
+      <View style={styles.tabBlockerContent}>
+        <Ionicons name="warning" size={32} color="#FFD700" />
+        <Text style={styles.tabBlockerText}>
+          Partida en curso{"\n"}
+          <Text style={styles.tabBlockerSubtext}>
+            Termina el juego primero
+          </Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
 };
 
-// Hook de sonidos para Craps
-const useGameSounds = () => {
-  const [sounds, setSounds] = useState({});
-
-  const loadSounds = async () => {
-    try {
-      console.log("🔊 Cargando sonidos para Craps...");
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-
-      const soundObjects = {};
-
-      const soundTypes = [
-        { key: "card", file: require("../../assets/sounds/card.mp3") },
-        { key: "click", file: require("../../assets/sounds/click.mp3") },
-        { key: "coin", file: require("../../assets/sounds/coin.mp3") },
-        { key: "error", file: require("../../assets/sounds/error.mp3") },
-        { key: "success", file: require("../../assets/sounds/success.mp3") },
-      ];
-
-      for (const { key, file } of soundTypes) {
-        try {
-          const soundObject = new Audio.Sound();
-          await soundObject.loadAsync(file);
-          soundObjects[key] = soundObject;
-        } catch (error) {
-          console.log(`❌ Error cargando sonido ${key}:`, error);
-        }
-      }
-
-      setSounds(soundObjects);
-    } catch (error) {
-      console.log("❌ Error inicializando sistema de sonido:", error);
-    }
-  };
-
-  const playSound = async (type) => {
-    try {
-      let soundKey;
-      switch (type) {
-        case "win":
-          soundKey = "success";
-          break;
-        case "lose":
-          soundKey = "error";
-          break;
-        case "dice":
-          soundKey = "card";
-          break;
-        case "chip":
-        case "coin":
-          soundKey = "coin";
-          break;
-        case "click":
-        default:
-          soundKey = "click";
-      }
-
-      if (sounds[soundKey]) {
-        await sounds[soundKey].replayAsync();
-      } else {
-        playVibration(type);
-      }
-    } catch (error) {
-      playVibration(type);
-    }
-  };
-
-  const playVibration = (type) => {
-    switch (type) {
-      case "win":
-        Vibration.vibrate([0, 100, 50, 100, 50, 100]);
-        break;
-      case "lose":
-        Vibration.vibrate([0, 300, 100, 300]);
-        break;
-      case "dice":
-        Vibration.vibrate([0, 50, 25, 50]);
-        break;
-      case "chip":
-      case "coin":
-        Vibration.vibrate(20);
-        break;
-      case "click":
-      default:
-        Vibration.vibrate(15);
-    }
-  };
+// Componente de Modal de Bloqueo - Solo imagen grande con auto-cierre de 3 segundos
+const BlockModal = ({ visible, onClose }) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [scaleAnim] = useState(new Animated.Value(0.5));
+  const [slideAnim] = useState(new Animated.Value(-100));
+  const modalRef = useRef(null);
 
   useEffect(() => {
-    loadSounds();
+    if (visible) {
+      // Animación de entrada
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 120,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+      ]).start();
 
-    return () => {
-      Object.values(sounds).forEach((sound) => {
-        if (sound) {
-          sound.unloadAsync();
-        }
-      });
-    };
-  }, []);
+      // Auto-cierre después de 3 segundos
+      const timer = setTimeout(() => {
+        handleClose();
+      }, 3000);
 
-  return playSound;
+      return () => clearTimeout(timer);
+    } else {
+      // Resetear animaciones cuando no es visible
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.5);
+      slideAnim.setValue(-100);
+    }
+  }, [visible]);
+
+  const handleClose = () => {
+    // Animación de salida
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onClose();
+    });
+  };
+
+  const handleModalPress = () => {
+    handleClose();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlayTransparent} 
+        activeOpacity={1}
+        onPress={handleModalPress}
+      >
+        <Animated.View 
+          ref={modalRef}
+          style={[
+            styles.blockModalContainerTransparent,
+            { 
+              transform: [
+                { scale: scaleAnim },
+                { translateY: slideAnim }
+              ],
+              opacity: fadeAnim 
+            }
+          ]}
+        >
+          <Image 
+            source={require("../../assets/notesalgas.png")}
+            style={styles.probabilityImageLarge}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
 };
 
 // Componente de animación de victoria
@@ -248,57 +261,140 @@ const LoseAnimation = ({ show }) => {
   );
 };
 
+// Tabla de premios de tickets para Craps - VALORES REDUCIDOS
+const getTicketRewards = (betAmount, isNaturalWin = false) => {
+  const rewards = {
+    50: isNaturalWin ? 25 : 15,
+    100: isNaturalWin ? 50 : 30,
+    250: isNaturalWin ? 125 : 75,
+    500: isNaturalWin ? 250 : 150,
+  };
+  return rewards[betAmount] || 0;
+};
+
 export default function Craps({ navigation }) {
   const {
     manekiCoins,
     tickets,
-    addCoins,
     subtractCoins,
     addTickets,
     canAfford,
   } = useCoins();
-  const playSound = useGameSounds();
 
   const [bet, setBet] = useState(0);
   const [dice1, setDice1] = useState(1);
   const [dice2, setDice2] = useState(1);
   const [gameState, setGameState] = useState("betting");
   const [result, setResult] = useState("");
-  const [winAmount, setWinAmount] = useState(0);
   const [point, setPoint] = useState(null);
   const [phase, setPhase] = useState("comeOut");
   const [showWinAnimation, setShowWinAnimation] = useState(false);
   const [showLoseAnimation, setShowLoseAnimation] = useState(false);
   const [ticketsWon, setTicketsWon] = useState(0);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  
+  // Estados para controlar la navegación
+  const [gameInProgress, setGameInProgress] = useState(false);
+  const [showTabBlocker, setShowTabBlocker] = useState(false);
 
   const diceAnimations = useState(new Animated.Value(0))[0];
   const resultAnimations = useState(new Animated.Value(0))[0];
   const [pulseAnim] = useState(new Animated.Value(1));
+  const navigationListener = useRef(null);
+  const backHandler = useRef(null);
 
+  // EFECTO PARA BLOQUEAR LA BARRA INFERIOR
   useEffect(() => {
-    const initializeAudio = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
+    navigation.getParent()?.setOptions({
+      tabBarStyle: gameInProgress ? { display: 'none' } : {
+        backgroundColor: "#1a1a1a",
+        borderTopWidth: 2,
+        borderTopColor: "#FFD700",
+        paddingBottom: 8,
+        paddingTop: 8,
+        height: 65,
+      }
+    });
+
+    if (gameInProgress) {
+      const unsubscribe = navigation.getParent()?.addListener('tabPress', (e) => {
+        e.preventDefault();
+        setShowTabBlocker(true);
+        setTimeout(() => setShowTabBlocker(false), 2000);
       });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+        navigation.getParent()?.setOptions({
+          tabBarStyle: {
+            backgroundColor: "#1a1a1a",
+            borderTopWidth: 2,
+            borderTopColor: "#FFD700",
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 65,
+          }
+        });
+      };
+    }
+  }, [navigation, gameInProgress]);
+
+  // Manejar navegación y botón de retroceso
+  useEffect(() => {
+    backHandler.current = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (gameState === "rolling" || gameInProgress) {
+          setShowBlockModal(true);
+          return true;
+        }
+        return false;
+      }
+    );
+
+    navigationListener.current = navigation.addListener('beforeRemove', (e) => {
+      if (gameState === "rolling" || gameInProgress) {
+        e.preventDefault();
+        setShowBlockModal(true);
+      }
+    });
+
+    return () => {
+      if (backHandler.current?.remove) backHandler.current.remove();
+      if (navigationListener.current) navigationListener.current();
     };
-    initializeAudio();
-  }, []);
+  }, [navigation, gameState, gameInProgress]);
 
   const diceFaces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
   const diceValues = [1, 2, 3, 4, 5, 6];
 
+  // Función para determinar si el jugador gana automáticamente (5% de probabilidad)
+  const shouldAutoWin = () => {
+    return Math.random() < 0.05;
+  };
+
   const animateDice = () => {
     diceAnimations.setValue(0);
-    Animated.timing(diceAnimations, {
-      toValue: 1,
-      duration: 800,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    Animated.sequence([
+      Animated.timing(diceAnimations, {
+        toValue: 1,
+        duration: 400,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(diceAnimations, {
+        toValue: 0.8,
+        duration: 200,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(diceAnimations, {
+        toValue: 1,
+        tension: 100,
+        friction: 5,
+        useNativeDriver: true,
+      })
+    ]).start();
   };
 
   const animateResult = () => {
@@ -340,9 +436,12 @@ export default function Craps({ navigation }) {
     setTimeout(() => setShowLoseAnimation(false), 3000);
   };
 
+  const handleCloseBlockModal = () => {
+    setShowBlockModal(false);
+  };
+
   const placeBet = async (amount) => {
     if (!canAfford(amount)) {
-      await playSound("error");
       Alert.alert(
         "Fondos Insuficientes",
         "No tienes suficientes Maneki Coins para esta apuesta"
@@ -352,7 +451,6 @@ export default function Craps({ navigation }) {
 
     setBet(amount);
     subtractCoins(amount, `Apuesta en Craps`);
-    await playSound("coin");
     pulseAnimation();
 
     setGameState("rolling");
@@ -362,16 +460,16 @@ export default function Craps({ navigation }) {
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
     setTicketsWon(0);
+    setGameInProgress(true);
   };
 
   const rollDice = async () => {
-    await playSound("dice");
     animateDice();
 
     setGameState("rolling");
 
     let rollCount = 0;
-    const maxRolls = 8;
+    const maxRolls = 10;
     const rollInterval = setInterval(() => {
       const tempRoll1 = diceValues[Math.floor(Math.random() * 6)];
       const tempRoll2 = diceValues[Math.floor(Math.random() * 6)];
@@ -384,20 +482,49 @@ export default function Craps({ navigation }) {
         clearInterval(rollInterval);
 
         setTimeout(() => {
-          const finalRoll1 = diceValues[Math.floor(Math.random() * 6)];
-          const finalRoll2 = diceValues[Math.floor(Math.random() * 6)];
-          const total = finalRoll1 + finalRoll2;
+          const autoWin = shouldAutoWin();
+          let finalRoll1, finalRoll2;
+
+          if (autoWin) {
+            // Victoria automática - generar dados que aseguren la victoria
+            if (phase === "comeOut") {
+              // En fase de salida, hacer que salga 7 u 11
+              const winningValues = [7, 11];
+              const targetTotal = winningValues[Math.floor(Math.random() * 2)];
+              finalRoll1 = Math.floor(Math.random() * 6) + 1;
+              finalRoll2 = targetTotal - finalRoll1;
+              
+              // Asegurar que el segundo dado sea válido
+              if (finalRoll2 < 1 || finalRoll2 > 6) {
+                finalRoll1 = 6;
+                finalRoll2 = 1; // Total 7
+              }
+            } else {
+              // En fase de punto, hacer que salga el punto
+              finalRoll1 = Math.floor(Math.random() * 6) + 1;
+              finalRoll2 = point - finalRoll1;
+              
+              // Asegurar que el segundo dado sea válido
+              if (finalRoll2 < 1 || finalRoll2 > 6) {
+                finalRoll1 = Math.ceil(point / 2);
+                finalRoll2 = point - finalRoll1;
+              }
+            }
+          } else {
+            // Juego normal
+            finalRoll1 = diceValues[Math.floor(Math.random() * 6)];
+            finalRoll2 = diceValues[Math.floor(Math.random() * 6)];
+          }
 
           setDice1(finalRoll1);
           setDice2(finalRoll2);
-          determineResult(total);
-        }, 200);
+          determineResult(finalRoll1 + finalRoll2, autoWin);
+        }, 300);
       }
-    }, 100);
+    }, 120);
   };
 
-  const determineResult = async (total) => {
-    let finalWinAmount = 0;
+  const determineResult = async (total, autoWin = false) => {
     let ticketReward = 0;
     let resultMessage = "";
     let newPoint = point;
@@ -405,80 +532,78 @@ export default function Craps({ navigation }) {
     let isNaturalWin = false;
 
     if (phase === "comeOut") {
-      if (total === 7 || total === 11) {
-        // GANADOR NATURAL - Solo tickets, NO coins
-        finalWinAmount = 0; // No ganas coins adicionales
+      if (autoWin || total === 7 || total === 11) {
+        // GANADOR NATURAL - Solo tickets
         isNaturalWin = true;
         ticketReward = getTicketRewards(bet, isNaturalWin);
-        resultMessage = `GANADOR NATURAL - ${total}`;
-        await playSound("win");
+        if (autoWin) {
+          resultMessage = `¡GANANCIA SORPRESA! - ${total}`;
+        } else {
+          resultMessage = `GANADOR NATURAL - ${total}`;
+        }
         triggerWinAnimation(ticketReward);
       } else if (total === 2 || total === 3 || total === 12) {
-        // CRAPS - Pierdes la apuesta (ya se restó al apostar)
+        // CRAPS - Pierdes la apuesta
         resultMessage = `CRAPS - ${total} - Pierdes`;
-        await playSound("lose");
         triggerLoseAnimation();
       } else {
         // Establecer punto
         newPoint = total;
         newPhase = "point";
-        finalWinAmount = 0;
         resultMessage = `PUNTO ESTABLECIDO: ${total}`;
-        await playSound("click");
       }
     } else {
-      if (total === point) {
-        // GANAR PUNTO - Solo tickets, NO coins
-        finalWinAmount = 0; // No ganas coins adicionales
+      if (autoWin || total === point) {
+        // GANAR PUNTO - Solo tickets
         ticketReward = getTicketRewards(bet, false);
-        resultMessage = `PUNTO GANADO - ${total}`;
-        await playSound("win");
+        if (autoWin) {
+          resultMessage = `¡GANANCIA SORPRESA! - Punto ${total}`;
+        } else {
+          resultMessage = `PUNTO GANADO - ${total}`;
+        }
         triggerWinAnimation(ticketReward);
         newPoint = null;
         newPhase = "comeOut";
       } else if (total === 7) {
-        // SIETE FUERA - Pierdes (ya se restó al apostar)
+        // SIETE FUERA - Pierdes
         resultMessage = `SIETE FUERA - ${total} - Pierdes`;
-        await playSound("lose");
         triggerLoseAnimation();
         newPoint = null;
         newPhase = "comeOut";
       } else {
         // Continuar buscando punto
-        finalWinAmount = 0;
         resultMessage = `Rodada: ${total} - Buscando Punto ${point}`;
-        await playSound("click");
       }
     }
 
     // Procesar SOLO tickets si hay ganancia
-    // NO agregar coins adicionales - solo se devuelve la apuesta original
     if (ticketReward > 0) {
       await addTickets(ticketReward, `Ganancia en Craps - Tickets`);
     }
 
-    // Si ganas, NO agregamos coins adicionales
-    // El jugador solo recupera su apuesta implícitamente al no perderla
-    setWinAmount(finalWinAmount);
     setResult(resultMessage);
     setPoint(newPoint);
     setPhase(newPhase);
     setGameState("result");
     animateResult();
     pulseAnimation();
+
+    // Si el juego terminó, marcar como no en progreso
+    if (newPhase === "comeOut" && (ticketReward > 0 || result.includes("Pierdes"))) {
+      setGameInProgress(false);
+    }
   };
 
   const resetGame = async () => {
     setBet(0);
     setGameState("betting");
     setResult("");
-    setWinAmount(0);
     setPoint(null);
     setPhase("comeOut");
     setShowWinAnimation(false);
     setShowLoseAnimation(false);
     setTicketsWon(0);
-    await playSound("click");
+    setGameInProgress(false);
   };
 
   const continueGame = async () => {
@@ -492,17 +617,22 @@ export default function Craps({ navigation }) {
         {
           rotate: diceAnimations.interpolate({
             inputRange: [0, 1],
-            outputRange: ["0deg", "720deg"],
+            outputRange: ["0deg", "360deg"],
           }),
         },
         {
           scale: diceAnimations.interpolate({
+            inputRange: [0, 0.3, 0.6, 1],
+            outputRange: [1, 1.3, 0.9, 1],
+          }),
+        },
+        {
+          translateY: diceAnimations.interpolate({
             inputRange: [0, 0.5, 1],
-            outputRange: [1, 1.2, 1],
+            outputRange: [0, -20, 0],
           }),
         },
       ],
-      opacity: diceAnimations,
     };
 
     return (
@@ -520,6 +650,27 @@ export default function Craps({ navigation }) {
       {/* Animaciones centradas */}
       <WinAnimation show={showWinAnimation} ticketsWon={ticketsWon} />
       <LoseAnimation show={showLoseAnimation} />
+      
+      <BlockModal
+        visible={showBlockModal}
+        onClose={handleCloseBlockModal}
+      />
+
+      {/* Bloqueador de pestañas */}
+      <TabBlocker 
+        isVisible={showTabBlocker} 
+        onPress={() => setShowTabBlocker(false)}
+      />
+
+      {/* Indicador de juego en progreso */}
+      {gameInProgress && (
+        <View style={styles.gameInProgressIndicator}>
+          <Ionicons name="lock-closed" size={16} color="#FFF" />
+          <Text style={styles.gameInProgressText}>
+            PARTIDA EN CURSO - NO PUEDES SALIR
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -616,13 +767,13 @@ export default function Craps({ navigation }) {
                   },
                 ],
                 borderColor:
-                  result.includes("GANADOR") || result.includes("PUNTO GANADO")
+                  result.includes("GANANCIA") || result.includes("GANADOR") || result.includes("PUNTO GANADO")
                     ? "#10B981"
                     : result.includes("Pierdes")
                     ? "#EF4444"
                     : "#2563EB",
                 backgroundColor:
-                  result.includes("GANADOR") || result.includes("PUNTO GANADO")
+                  result.includes("GANANCIA") || result.includes("GANADOR") || result.includes("PUNTO GANADO")
                     ? "rgba(16, 185, 129, 0.1)"
                     : result.includes("Pierdes")
                     ? "rgba(239, 68, 68, 0.1)"
@@ -635,8 +786,7 @@ export default function Craps({ navigation }) {
                 styles.message,
                 {
                   color:
-                    result.includes("GANADOR") ||
-                    result.includes("PUNTO GANADO")
+                    result.includes("GANANCIA") || result.includes("GANADOR") || result.includes("PUNTO GANADO")
                       ? "#10B981"
                       : result.includes("Pierdes")
                       ? "#EF4444"
@@ -678,10 +828,7 @@ export default function Craps({ navigation }) {
                     onPress={async () => {
                       if (canAfford(amount)) {
                         setBet(amount);
-                        await playSound("click");
                         pulseAnimation();
-                      } else {
-                        await playSound("error");
                       }
                     }}
                     disabled={!canAfford(amount)}
@@ -832,13 +979,13 @@ const styles = StyleSheet.create({
     minWidth: 80,
   },
   coinIcon: {
-    width: 14, // Tamaño original
-    height: 14, // Tamaño original
+    width: 14,
+    height: 14,
     resizeMode: "contain",
   },
   ticketIcon: {
-    width: 14, // Tamaño original
-    height: 14, // Tamaño original
+    width: 14,
+    height: 14,
     resizeMode: "contain",
   },
   balanceText: {
@@ -846,26 +993,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "bold",
   },
-  titleContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    top: 0,
-  },
-  title: {
-    color: "#FFD700",
-    fontSize: 18,
-    fontWeight: "bold",
-    letterSpacing: 1,
-  },
   emptySpace: {
     width: 80,
   },
   diceArea: {
     backgroundColor: "rgba(26, 26, 26, 0.9)",
     borderRadius: 12,
-    padding: 15,
+    padding: 20,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#333",
@@ -876,7 +1010,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     width: "100%",
-    marginBottom: 12,
+    marginBottom: 15,
   },
   areaTitle: {
     color: "#FFF",
@@ -897,32 +1031,32 @@ const styles = StyleSheet.create({
   diceContainer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginBottom: 12,
+    marginBottom: 15,
   },
   dice: {
-    width: 60,
-    height: 60,
+    width: 80, // DADOS MÁS GRANDES
+    height: 80, // DADOS MÁS GRANDES
     backgroundColor: "#FFFFFF",
-    borderRadius: 10,
-    marginHorizontal: 8,
+    borderRadius: 12,
+    marginHorizontal: 10,
     justifyContent: "center",
     alignItems: "center",
-    elevation: 6,
+    elevation: 8,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    borderWidth: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    borderWidth: 3,
     borderColor: "#E5E5E5",
   },
   diceFace: {
-    fontSize: 30,
+    fontSize: 40, // CARA MÁS GRANDE
   },
   diceValue: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "bold",
     color: "#000",
-    marginTop: 2,
+    marginTop: 4,
   },
   total: {
     color: "#FFD700",
@@ -983,8 +1117,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
-  winAmount: {
-    color: "#FFD700",
+  ticketsWonText: {
+    color: "#10B981",
     fontSize: 16,
     fontWeight: "bold",
   },
@@ -993,20 +1127,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
     opacity: 0.9,
-  },
-  ticketsWonContainer: {
-    marginTop: 5,
-    backgroundColor: "rgba(16, 185, 129, 0.2)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#10B981",
-  },
-  ticketsWonText: {
-    color: "#10B981",
-    fontSize: 16,
-    fontWeight: "bold",
   },
   betInfo: {
     color: "#FFF",
@@ -1278,5 +1398,74 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 6,
     textAlign: "center",
+  },
+  // Estilos para el modal transparente (solo imagen)
+  modalOverlayTransparent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  blockModalContainerTransparent: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'transparent',
+  },
+  probabilityImageLarge: {
+    width: width * 0.8,
+    height: height * 0.6,
+    maxWidth: 400,
+    maxHeight: 400,
+  },
+  // NUEVOS ESTILOS para el bloqueo de navegación
+  gameInProgressIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DC2626",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "#B91C1C",
+    gap: 8,
+  },
+  gameInProgressText: {
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  tabBlocker: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  tabBlockerContent: {
+    backgroundColor: '#1a1a1a',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFD700',
+    maxWidth: '80%',
+  },
+  tabBlockerText: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  tabBlockerSubtext: {
+    fontSize: 14,
+    fontWeight: 'normal',
+    color: '#FFF',
   },
 });

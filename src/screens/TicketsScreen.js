@@ -20,10 +20,10 @@ import { useCoins } from "../context/CoinsContext";
 const { width } = Dimensions.get("window");
 
 // Parámetros oficiales
-const MXN_PER_TICKET = 0.10;     // 1 ticket = $0.10 MXN
+const MXN_PER_TICKET = 0.1; // 1 ticket = $0.10 MXN
 const MIN_TICKETS = 200;
 const MAX_TICKETS = 100000;
-const FEE_PCT = 0.10;            // 10%
+const FEE_PCT = 0.1; // 10%
 
 export default function TicketScreen({ navigation }) {
   const {
@@ -39,15 +39,20 @@ export default function TicketScreen({ navigation }) {
   const [step2Visible, setStep2Visible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [bankAccount, setBankAccount] = useState("");
 
-  // Historial SOLO de tickets
+  // ✅ HISTORIAL ACTUALIZADO - usar tipos correctos
   const ticketHistory = useMemo(() => {
     return (transactions || []).filter(
-      (t) => t.type === "ganancia_tickets" || t.type === "retiro_tickets"
+      (t) => t.type === "ganancia" || t.type === "retiro" // ✅ Tipos actualizados
     );
   }, [transactions]);
 
   // Helpers
+  const formatNumberWithCommas = (number) => {
+    return number.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  };
+
   const toInt = (v) => {
     const n = parseInt(String(v).replace(/[^\d]/g, ""), 10);
     return Number.isNaN(n) ? 0 : n;
@@ -55,8 +60,7 @@ export default function TicketScreen({ navigation }) {
 
   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-  const fmtCurrency = (mxn) =>
-    `$${(mxn ?? 0).toFixed(2)} MXN`;
+  const fmtCurrency = (mxn) => `$${(mxn ?? 0).toFixed(2)} MXN`;
 
   const computePreview = (ticketQty) => {
     const mxnGross = ticketQty * MXN_PER_TICKET;
@@ -83,16 +87,44 @@ export default function TicketScreen({ navigation }) {
     }
   }, [refreshCoins]);
 
+  // Formatear cuenta bancaria (16 dígitos en grupos de 4)
+  const formatBankAccount = (text) => {
+    const cleanText = text.replace(/[^\d]/g, "").slice(0, 16);
+    const groups = [];
+    for (let i = 0; i < cleanText.length; i += 4) {
+      groups.push(cleanText.slice(i, i + 4));
+    }
+    return groups.join(" ");
+  };
+
+  const handleBankAccountChange = (text) => {
+    const formatted = formatBankAccount(text);
+    setBankAccount(formatted);
+  };
+
   // UI actions
   const handleQuick = (n) => {
     const cur = toInt(amount);
     const next = clamp(cur + n, 0, Math.min(MAX_TICKETS, tickets));
-    setAmount(String(next));
+    setAmount(formatNumberWithCommas(next));
   };
 
   const handleMax = () => {
     const m = clamp(tickets, MIN_TICKETS, MAX_TICKETS);
-    setAmount(String(m));
+    setAmount(formatNumberWithCommas(m));
+  };
+
+  const handleAmountChange = (text) => {
+    // Remover todas las comas y caracteres no numéricos
+    const cleanText = text.replace(/[^\d]/g, "");
+    const numberValue = cleanText === "" ? "" : parseInt(cleanText, 10);
+
+    if (cleanText === "") {
+      setAmount("");
+    } else if (!isNaN(numberValue)) {
+      // Formatear con comas
+      setAmount(formatNumberWithCommas(numberValue));
+    }
   };
 
   const openStep1 = () => {
@@ -104,21 +136,21 @@ export default function TicketScreen({ navigation }) {
     if (n < MIN_TICKETS) {
       Alert.alert(
         "Mínimo no alcanzado",
-        `El mínimo de retiro es ${MIN_TICKETS} tickets.`
+        `El mínimo de retiro es ${formatNumberWithCommas(MIN_TICKETS)} tickets.`
       );
       return;
     }
     if (n > MAX_TICKETS) {
       Alert.alert(
         "Máximo excedido",
-        `El máximo de retiro es ${MAX_TICKETS} tickets.`
+        `El máximo de retiro es ${formatNumberWithCommas(MAX_TICKETS)} tickets.`
       );
       return;
     }
     if (n > tickets) {
       Alert.alert(
         "Tickets insuficientes",
-        `Tu saldo actual es ${tickets} tickets.`
+        `Tu saldo actual es ${formatNumberWithCommas(tickets)} tickets.`
       );
       return;
     }
@@ -133,9 +165,28 @@ export default function TicketScreen({ navigation }) {
   const cancelAll = () => {
     setStep1Visible(false);
     setStep2Visible(false);
+    setBankAccount("");
   };
 
   const doWithdraw = async () => {
+    // Validar cuenta bancaria (16 dígitos exactos)
+    const cleanBankAccount = bankAccount.replace(/[^\d]/g, "");
+    if (!cleanBankAccount) {
+      Alert.alert(
+        "Error",
+        "Por favor ingresa tu cuenta bancaria para proceder con el retiro."
+      );
+      return;
+    }
+
+    if (cleanBankAccount.length !== 16) {
+      Alert.alert(
+        "Error",
+        "La cuenta bancaria debe tener exactamente 16 dígitos."
+      );
+      return;
+    }
+
     try {
       setSubmitting(true);
       const n = validQty;
@@ -144,17 +195,24 @@ export default function TicketScreen({ navigation }) {
       const result = await solicitarRetiroTickets(n);
       setStep2Visible(false);
       setAmount("");
+      setBankAccount("");
 
       Alert.alert(
-        "Retiro solicitado",
-        `Se retiraron ${n} tickets.\nMonto bruto: ${fmtCurrency(
-          n * MXN_PER_TICKET
-        )}\nFee (10%): ${fmtCurrency((n * MXN_PER_TICKET) * FEE_PCT)}\nA pagar: ${fmtCurrency(
-          (n * MXN_PER_TICKET) * (1 - FEE_PCT)
-        )}`
+        "🎉 ¡Retiro Procesado Exitosamente!",
+        `✅ Se han convertido ${formatNumberWithCommas(
+          n
+        )} tickets a dinero real.\n\n` +
+          `💳 **Cuenta destino:** ${bankAccount}\n` +
+          `💰 **Monto depositado:** ${fmtCurrency(preview.mxnNet)}\n` +
+          `📊 **Tickets utilizados:** ${formatNumberWithCommas(n)}\n` +
+          `🎫 **Tickets restantes:** ${formatNumberWithCommas(
+            result.tickets_restantes
+          )}\n\n` +
+          `⏰ **El dinero estará disponible en tu cuenta bancaria en un plazo de 24 a 72 horas hábiles.**\n\n` +
+          `¡Gracias por confiar en nosotros! 🎰`
       );
     } catch (err) {
-      Alert.alert("Error", err.message || "No se pudo procesar el retiro.");
+      Alert.alert("❌ Error", err.message || "No se pudo procesar el retiro.");
     } finally {
       setSubmitting(false);
     }
@@ -170,9 +228,10 @@ export default function TicketScreen({ navigation }) {
   );
 
   const HistoryItem = ({ item }) => {
-    const isGain = item.type === "ganancia_tickets";
+    const isGain = item.type === "ganancia";
     const t = Math.abs(item.amount || 0);
     const { mxnGross } = computePreview(t);
+
     return (
       <View style={styles.txRow}>
         <View style={styles.txIconWrap}>
@@ -187,15 +246,18 @@ export default function TicketScreen({ navigation }) {
             {isGain ? "Ganancia de tickets" : "Retiro de tickets"}
           </Text>
           <Text style={styles.txSub}>
-            {new Date(item.created_at || item.date).toLocaleString()}
+            {new Date(item.created_at || item.date).toLocaleString("es-MX")}
           </Text>
           {!!item.description && (
             <Text style={styles.txDesc}>{item.description}</Text>
           )}
         </View>
         <View style={{ alignItems: "flex-end" }}>
-          <Text style={[styles.txAmt, { color: isGain ? "#4CAF50" : "#FF6B6B" }]}>
-            {isGain ? "+" : "-"}{t} tks
+          <Text
+            style={[styles.txAmt, { color: isGain ? "#4CAF50" : "#FF6B6B" }]}
+          >
+            {isGain ? "+" : "-"}
+            {formatNumberWithCommas(t)} tks
           </Text>
           <Text style={styles.txMXN}>{fmtCurrency(mxnGross)}</Text>
         </View>
@@ -206,26 +268,26 @@ export default function TicketScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#8B0000" />
-      {/* Header simple */}
-
 
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
+            refreshing={refreshing || isLoading}
             onRefresh={onRefresh}
             colors={["#FFD700"]}
             tintColor="#FFD700"
-            title="Actualizando..."
-            titleColor="#FFD700"
           />
         }
       >
         {/* Saldo actual */}
         <View style={styles.balanceCard}>
-          <HeaderStat icon="ticket" label="Tickets" value={`${tickets}`} />
+          <HeaderStat
+            icon="ticket"
+            label="Tickets"
+            value={formatNumberWithCommas(tickets)}
+          />
           <View style={styles.dividerV} />
           <HeaderStat
             icon="cash"
@@ -236,21 +298,22 @@ export default function TicketScreen({ navigation }) {
 
         {/* Formulario Retiro */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Retirar tickets</Text>
+          <Text style={styles.sectionTitle}>Retirar Tickets</Text>
           <Text style={styles.helpText}>
-            Mínimo {MIN_TICKETS} · Máximo {MAX_TICKETS} · Fee 10% MXN
+            Mínimo {formatNumberWithCommas(MIN_TICKETS)} · Máximo{" "}
+            {formatNumberWithCommas(MAX_TICKETS)} · Fee 10% MXN
           </Text>
 
           <View style={styles.inputRow}>
             <Ionicons name="ticket" size={18} color="#FFD700" />
             <TextInput
               value={amount}
-              onChangeText={(t) => setAmount(t.replace(/[^\d]/g, ""))}
+              onChangeText={handleAmountChange}
               placeholder="Cantidad de tickets"
               placeholderTextColor="#999"
               keyboardType="numeric"
               style={styles.input}
-              maxLength={6}
+              maxLength={9}
             />
             <TouchableOpacity onPress={handleMax} style={styles.maxBtn}>
               <Text style={styles.maxBtnText}>MAX</Text>
@@ -265,17 +328,24 @@ export default function TicketScreen({ navigation }) {
                 style={styles.quickBtn}
                 onPress={() => handleQuick(n)}
               >
-                <Text style={styles.quickBtnText}>+{n}</Text>
+                <Text style={styles.quickBtnText}>
+                  +{formatNumberWithCommas(n)}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
 
           {/* Preview financiero */}
-          <View style={styles.previewCard}>
-            <Row label="Monto bruto" value={fmtCurrency(validQty * MXN_PER_TICKET)} />
-            <Row label="Fee (10%)" value={fmtCurrency(preview.fee)} />
-            <Row label="Recibirás" value={fmtCurrency(preview.mxnNet)} bold />
-          </View>
+          {validQty > 0 && (
+            <View style={styles.previewCard}>
+              <Row
+                label="Monto bruto"
+                value={fmtCurrency(validQty * MXN_PER_TICKET)}
+              />
+              <Row label="Fee (10%)" value={fmtCurrency(preview.fee)} />
+              <Row label="Recibirás" value={fmtCurrency(preview.mxnNet)} bold />
+            </View>
+          )}
 
           <TouchableOpacity
             style={[
@@ -286,17 +356,21 @@ export default function TicketScreen({ navigation }) {
             onPress={openStep1}
           >
             <Ionicons name="shield-checkmark" size={18} color="#000" />
-            <Text style={styles.primaryBtnText}>Continuar</Text>
+            <Text style={styles.primaryBtnText}>
+              {submitting ? "Procesando..." : "Continuar"}
+            </Text>
           </TouchableOpacity>
         </View>
 
         {/* Historial */}
         <View style={[styles.section, { marginBottom: 30 }]}>
-          <Text style={styles.sectionTitle}>Historial de tickets</Text>
+          <Text style={styles.sectionTitle}>Historial de Tickets</Text>
           {ticketHistory.length === 0 ? (
             <View style={styles.emptyBox}>
               <Ionicons name="time-outline" size={32} color="#777" />
-              <Text style={styles.emptyText}>Aún no tienes movimientos de tickets</Text>
+              <Text style={styles.emptyText}>
+                Aún no tienes movimientos de tickets
+              </Text>
             </View>
           ) : (
             ticketHistory.map((item) => (
@@ -307,55 +381,169 @@ export default function TicketScreen({ navigation }) {
       </ScrollView>
 
       {/* Paso 1: Confirmación */}
-      <Modal visible={step1Visible} transparent animationType="fade" onRequestClose={() => setStep1Visible(false)}>
+      <Modal
+        visible={step1Visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStep1Visible(false)}
+      >
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Confirmar retiro</Text>
-            <Text style={styles.modalText}>
-              Retirarás {validQty} tickets.
-            </Text>
-            <View style={[styles.previewCard, { marginTop: 10 }]}>
-              <Row label="Bruto" value={fmtCurrency(validQty * MXN_PER_TICKET)} />
-              <Row label="Fee (10%)" value={fmtCurrency(preview.fee)} />
-              <Row label="A pagar" value={fmtCurrency(preview.mxnNet)} bold />
+            <View style={styles.modalHeader}>
+              <Ionicons name="cash-outline" size={32} color="#FFD700" />
+              <Text style={styles.modalTitle}>Confirmar Conversión</Text>
             </View>
+
+            <View style={styles.conversionCard}>
+              <Text style={styles.conversionTitle}>Resumen de Conversión</Text>
+
+              <View style={styles.conversionRow}>
+                <View style={styles.conversionIcon}>
+                  <Ionicons name="ticket" size={20} color="#FFD700" />
+                </View>
+                <Text style={styles.conversionLabel}>Tickets a convertir:</Text>
+                <Text style={styles.conversionValue}>
+                  {formatNumberWithCommas(validQty)}
+                </Text>
+              </View>
+
+              <View style={styles.conversionDivider} />
+
+              <View style={styles.conversionRow}>
+                <View style={styles.conversionIcon}>
+                  <Ionicons name="trending-up" size={20} color="#4CAF50" />
+                </View>
+                <Text style={styles.conversionLabel}>Monto bruto:</Text>
+                <Text style={styles.conversionValue}>
+                  {fmtCurrency(validQty * MXN_PER_TICKET)}
+                </Text>
+              </View>
+
+              <View style={styles.conversionRow}>
+                <View style={styles.conversionIcon}>
+                  <Ionicons name="trending-down" size={20} color="#FF6B6B" />
+                </View>
+                <Text style={styles.conversionLabel}>Fee (10%):</Text>
+                <Text style={styles.conversionValue}>
+                  -{fmtCurrency(preview.fee)}
+                </Text>
+              </View>
+
+              <View style={styles.conversionDivider} />
+
+              <View style={[styles.conversionRow, styles.totalRow]}>
+                <View style={styles.conversionIcon}>
+                  <Ionicons name="wallet" size={20} color="#32CD32" />
+                </View>
+                <Text style={styles.totalLabel}>Total a recibir:</Text>
+                <Text style={styles.totalValue}>
+                  {fmtCurrency(preview.mxnNet)}
+                </Text>
+              </View>
+            </View>
+
+            {/* BOTONES CORREGIDOS - MISMO TAMAÑO Y CENTRADOS */}
             <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={cancelAll}>
-                <Text style={styles.secondaryBtnText}>Cancelar</Text>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.cancelBtn]}
+                onPress={cancelAll}
+              >
+                <Ionicons name="close-circle" size={18} color="#FF6B6B" />
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryBtn} onPress={confirmStep1}>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.confirmBtn]}
+                onPress={confirmStep1}
+              >
                 <Ionicons name="checkmark-circle" size={18} color="#000" />
-                <Text style={styles.primaryBtnText}>Confirmar</Text>
+                <Text style={styles.confirmBtnText}>Confirmar</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Paso 2: Confirmación Final */}
-      <Modal visible={step2Visible} transparent animationType="fade" onRequestClose={() => setStep2Visible(false)}>
+      {/* Paso 2: Información Bancaria */}
+      <Modal
+        visible={step2Visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStep2Visible(false)}
+      >
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Confirmación final</Text>
-            <Text style={styles.modalText}>
-              ¿Deseas proceder? Esta acción descontará los tickets de tu saldo.
-            </Text>
-            <View style={[styles.previewCard, { marginTop: 10 }]}>
-              <Row label="Tickets a retirar" value={`${validQty} tks`} />
-              <Row label="A pagar" value={fmtCurrency(preview.mxnNet)} bold />
+            <View style={styles.modalHeader}>
+              <Ionicons name="card" size={32} color="#FFD700" />
+              <Text style={styles.modalTitle}>Información Bancaria</Text>
             </View>
+
+            <Text style={styles.modalText}>
+              Ingresa los 16 dígitos de tu cuenta bancaria para recibir:
+            </Text>
+
+            <View style={styles.amountHighlight}>
+              <Text style={styles.amountHighlightText}>
+                {fmtCurrency(preview.mxnNet)}
+              </Text>
+            </View>
+
+            <View style={styles.bankInputContainer}>
+              <Ionicons name="card-outline" size={20} color="#FFD700" />
+              <TextInput
+                value={bankAccount}
+                onChangeText={handleBankAccountChange}
+                placeholder="1234 5678 9012 3456"
+                placeholderTextColor="#999"
+                style={styles.bankInput}
+                keyboardType="numeric"
+                maxLength={19} // 16 dígitos + 3 espacios
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={styles.accountHelp}>
+              <Ionicons name="information-circle" size={14} color="#FFD700" />
+              <Text style={styles.accountHelpText}>
+                Ingresa los 16 dígitos de tu cuenta
+              </Text>
+            </View>
+
+            <View style={styles.infoBox}>
+              <Ionicons name="time" size={16} color="#FFD700" />
+              <Text style={styles.infoText}>
+                El depósito se realizará en un plazo de 24 a 72 horas hábiles
+              </Text>
+            </View>
+
+            {/* BOTONES CORREGIDOS - MISMO TAMAÑO Y CENTRADOS */}
             <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={cancelAll}>
-                <Text style={styles.secondaryBtnText}>Atrás</Text>
-              </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.primaryBtn, submitting && { opacity: 0.6 }]}
+                style={[styles.modalBtn, styles.cancelBtn]}
+                onPress={cancelAll}
+              >
+                <Ionicons name="close-circle" size={18} color="#FF6B6B" />
+                <Text style={styles.cancelBtnText}>Atrás</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  styles.confirmBtn,
+                  (submitting ||
+                    bankAccount.replace(/[^\d]/g, "").length !== 16) && {
+                    opacity: 0.6,
+                  },
+                ]}
                 onPress={doWithdraw}
-                disabled={submitting}
+                disabled={
+                  submitting || bankAccount.replace(/[^\d]/g, "").length !== 16
+                }
               >
                 <Ionicons name="cash" size={18} color="#000" />
-                <Text style={styles.primaryBtnText}>
-                  {submitting ? "Procesando..." : "Retirar"}
+                <Text style={styles.confirmBtnText}>
+                  {submitting ? "Procesando..." : "Depositar"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -368,8 +556,12 @@ export default function TicketScreen({ navigation }) {
 
 const Row = ({ label, value, bold }) => (
   <View style={styles.row}>
-    <Text style={[styles.rowLabel, bold && { fontWeight: "bold" }]}>{label}</Text>
-    <Text style={[styles.rowValue, bold && { fontWeight: "bold" }]}>{value}</Text>
+    <Text style={[styles.rowLabel, bold && { fontWeight: "bold" }]}>
+      {label}
+    </Text>
+    <Text style={[styles.rowValue, bold && { fontWeight: "bold" }]}>
+      {value}
+    </Text>
   </View>
 );
 
@@ -378,6 +570,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingTop: Platform.OS === "ios" ? 60 : 40,
     paddingBottom: 12,
     paddingHorizontal: 16,
@@ -385,15 +578,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 3,
     borderBottomColor: "#FFD700",
   },
-  backBtn: { padding: 6, marginRight: 8 },
+  backBtn: { padding: 6 },
   headerTitle: {
-    flex: 1,
-    textAlign: "center",
     color: "#FFD700",
     fontWeight: "bold",
     fontSize: 18,
     letterSpacing: 1,
   },
+  placeholder: { width: 32 },
 
   // Balance
   balanceCard: {
@@ -448,6 +640,75 @@ const styles = StyleSheet.create({
   },
   maxBtnText: { color: "#000", fontWeight: "bold", fontSize: 12 },
 
+  // Bank Input
+  bankInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(26,26,26,0.8)",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#333",
+    paddingHorizontal: 12,
+    height: 48,
+    marginTop: 12,
+  },
+  bankInput: {
+    flex: 1,
+    color: "#fff",
+    fontSize: 16,
+    marginLeft: 8,
+    letterSpacing: 1,
+  },
+
+  // Account Help
+  accountHelp: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 6,
+  },
+  accountHelpText: {
+    color: "#FFD700",
+    fontSize: 12,
+    fontStyle: "italic",
+  },
+
+  // Amount Highlight
+  amountHighlight: {
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
+    borderWidth: 2,
+    borderColor: "#FFD700",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    marginVertical: 12,
+  },
+  amountHighlightText: {
+    color: "#FFD700",
+    fontSize: 20,
+    fontWeight: "bold",
+    letterSpacing: 1,
+  },
+
+  // Info Box
+  infoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(139, 0, 0, 0.3)",
+    borderWidth: 1,
+    borderColor: "#8B0000",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    gap: 8,
+  },
+  infoText: {
+    color: "#FFD700",
+    fontSize: 12,
+    flex: 1,
+    fontStyle: "italic",
+  },
+
   quickRow: { flexDirection: "row", gap: 8, marginTop: 10 },
   quickBtn: {
     backgroundColor: "#1a1a1a",
@@ -477,7 +738,7 @@ const styles = StyleSheet.create({
   primaryBtn: {
     marginTop: 12,
     backgroundColor: "#FFD700",
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
@@ -489,8 +750,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FFD700",
     borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
   },
   secondaryBtnText: { color: "#FFD700", fontWeight: "bold" },
 
@@ -533,7 +794,7 @@ const styles = StyleSheet.create({
   // Modals
   modalWrap: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
+    backgroundColor: "rgba(0,0,0,0.8)",
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
@@ -542,22 +803,131 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
     backgroundColor: "#1a1a1a",
-    borderWidth: 1,
-    borderColor: "#333",
-    borderRadius: 14,
-    padding: 16,
+    borderWidth: 2,
+    borderColor: "#FFD700",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#FFD700",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  modalHeader: {
+    alignItems: "center",
+    marginBottom: 20,
+    gap: 10,
   },
   modalTitle: {
     color: "#FFD700",
     fontWeight: "bold",
-    fontSize: 16,
-    marginBottom: 8,
+    fontSize: 20,
+    textAlign: "center",
+    letterSpacing: 1,
   },
-  modalText: { color: "#ddd" },
+  modalText: {
+    color: "#ddd",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  // Botones del modal - ESTILOS MEJORADOS
   modalBtns: {
-    marginTop: 14,
+    marginTop: 20,
     flexDirection: "row",
     justifyContent: "space-between",
+    gap: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+    minHeight: 50,
+    borderWidth: 2,
+  },
+  cancelBtn: {
+    borderColor: "#FF6B6B",
+    backgroundColor: "transparent",
+  },
+  confirmBtn: {
+    borderColor: "#FFD700",
+    backgroundColor: "#FFD700",
+  },
+  cancelBtnText: {
+    color: "#FF6B6B",
+    fontWeight: "bold",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  confirmBtnText: {
+    color: "#000",
+    fontWeight: "bold",
+    fontSize: 14,
+    textAlign: "center",
+  },
+
+  // Conversion Card
+  conversionCard: {
+    backgroundColor: "rgba(255, 215, 0, 0.05)",
+    borderWidth: 1,
+    borderColor: "#333",
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 12,
+  },
+  conversionTitle: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  conversionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 4,
     gap: 10,
+  },
+  conversionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  conversionLabel: {
+    color: "#bbb",
+    fontSize: 14,
+    flex: 1,
+  },
+  conversionValue: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  conversionDivider: {
+    height: 1,
+    backgroundColor: "#333",
+    marginVertical: 8,
+  },
+  totalRow: {
+    marginTop: 4,
+  },
+  totalLabel: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "bold",
+    flex: 1,
+  },
+  totalValue: {
+    color: "#32CD32",
+    fontSize: 16,
+    fontWeight: "bold",
   },
 });

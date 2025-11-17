@@ -1,5 +1,5 @@
 // src/screens/BuyCoinsScreen.js
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,11 +12,33 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCoins } from "../context/CoinsContext";
+import { supabase } from "../config/supabase";
+import { StripeProvider, useStripe } from '@stripe/stripe-react-native';
 
+// ✅ URL DE NGROK - CAMBIAR POR TU URL
+const API_URL = "https://semimanneristic-flurried-carolann.ngrok-free.dev";
+
+// Componente principal envuelto en StripeProvider
 export default function BuyCoinsScreen({ navigation }) {
+  return (
+    <StripeProvider
+      publishableKey="pk_test_51SS2vZ3KzYA7b3meOUWmJUmoq5nSVqr5HcDjjuqY33TnxYfzJtrW25cyu9H46BMaHmIzrhB98lOoVBokaSJ7kwZh00SZoBZ9dw"
+      merchantIdentifier="merchant.com.manekicasino"
+      urlScheme="manekicasino"
+    >
+      <BuyCoinsContent navigation={navigation} />
+    </StripeProvider>
+  );
+}
+
+// Componente de contenido
+function BuyCoinsContent({ navigation }) {
   const [selectedPackage, setSelectedPackage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
   const { addCoins, manekiCoins } = useCoins();
+  
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
   const coinPackages = [
     {
@@ -31,7 +53,7 @@ export default function BuyCoinsScreen({ navigation }) {
     },
     {
       id: 2,
-      coins: 1200, // ⬆️ Aumenté de 1000 a 1200
+      coins: 1200,
       price: 500.0,
       image: require("../assets/PAC2SINFONDO.png"),
       name: "Paquete Popular",
@@ -42,7 +64,7 @@ export default function BuyCoinsScreen({ navigation }) {
     },
     {
       id: 3,
-      coins: 6000, // ⬆️ Aumenté de 5000 a 6000
+      coins: 6000,
       price: 2000.0,
       image: require("../assets/PAC4SINFONDO.png"),
       name: "Paquete Premium",
@@ -52,7 +74,7 @@ export default function BuyCoinsScreen({ navigation }) {
     },
     {
       id: 4,
-      coins: 15000, // ⬆️ Aumenté de 10000 a 15000
+      coins: 15000,
       price: 5000.0,
       image: require("../assets/PAC3SINFONDO.png"),
       name: "Paquete Máximo Valor",
@@ -61,6 +83,21 @@ export default function BuyCoinsScreen({ navigation }) {
       description: "Máximo ahorro por moneda",
     },
   ];
+
+  useEffect(() => {
+    getCurrentUser();
+  }, []);
+
+  const getCurrentUser = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setCurrentUser(user);
+      }
+    } catch (error) {
+      console.error('❌ Error obteniendo usuario:', error);
+    }
+  };
 
   const calculatePricePerCoin = (price, coins) => {
     return (price / coins).toFixed(3);
@@ -72,56 +109,206 @@ export default function BuyCoinsScreen({ navigation }) {
     return coinPackages.find((pkg) => pkg.coins / pkg.price === maxValue)?.id;
   };
 
-  const handleBuyCoins = (packageItem) => {
+  // ✅ ALERTAS MEJORADAS - ESTILO MANEKI CASINO
+  const showSuccessAlert = (coins, transactionId) => {
     Alert.alert(
-      "Confirmar Compra",
-      `¿Estás seguro de que quieres comprar ${packageItem.coins.toLocaleString()} Maneki Coins por $${packageItem.price.toFixed(
-        2
-      )} MXN?\n\nRecibirás: ${packageItem.coins.toLocaleString()} MC\nNuevo saldo: ${(
-        manekiCoins + packageItem.coins
-      ).toLocaleString()} MC`,
+      "🎉 ¡COMPRA EXITOSA!",
+      `Acabas de adquirir ${coins.toLocaleString()} Maneki Coins\n\nTu transacción fue procesada correctamente.`,
       [
         {
-          text: "Cancelar",
-          style: "cancel",
-        },
-        {
-          text: "Comprar Ahora",
-          onPress: async () => {
-            try {
-              setIsProcessing(true);
-              // Simulación de procesamiento
-              await new Promise((resolve) => setTimeout(resolve, 1500));
-
-              addCoins(packageItem.coins, `Compra de ${packageItem.name}`);
-
-              Alert.alert(
-                "Compra Exitosa",
-                `Has adquirido ${packageItem.coins.toLocaleString()} Maneki Coins exitosamente.\n\nTu nuevo saldo es: ${(
-                  manekiCoins + packageItem.coins
-                ).toLocaleString()} MC`,
-                [
-                  {
-                    text: "Continuar",
-                    onPress: () => navigation.goBack(),
-                  },
-                ]
-              );
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                "No se pudo completar la compra. Por favor, intenta nuevamente."
-              );
-            } finally {
-              setIsProcessing(false);
-            }
+          text: "CONTINUAR",
+          style: "default",
+          onPress: () => {
+            setIsProcessing(false);
+            navigation.goBack();
           },
         },
       ]
     );
   };
 
+  const showErrorAlert = (message) => {
+    Alert.alert(
+      "❌ ERROR EN PAGO",
+      message,
+      [
+        {
+          text: "ENTENDIDO",
+          style: "cancel",
+        },
+      ]
+    );
+  };
+
+  const showCancelAlert = () => {
+    Alert.alert(
+      "⚠️ PAGO CANCELADO",
+      "El proceso de pago fue cancelado. Puedes intentarlo nuevamente cuando lo desees.",
+      [
+        {
+          text: "CONTINUAR",
+          style: "cancel",
+        },
+      ]
+    );
+  };
+
+  const handleBuyCoins = async (packageItem) => {
+    if (!currentUser) {
+      Alert.alert(
+        "🔐 SESIÓN REQUERIDA",
+        "Necesitas iniciar sesión para realizar compras en Maneki Casino",
+        [
+          { 
+            text: "INICIAR SESIÓN", 
+            onPress: () => navigation.navigate('Login') 
+          },
+          {
+            text: "MÁS TARDE",
+            style: "cancel"
+          }
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      "💰 CONFIRMAR COMPRA",
+      `¿Estás seguro de comprar ${packageItem.coins.toLocaleString()} Maneki Coins por $${packageItem.price.toFixed(2)} MXN?`,
+      [
+        {
+          text: "CANCELAR",
+          style: "cancel",
+        },
+        {
+          text: "PAGAR CON STRIPE",
+          onPress: () => processStripePayment(packageItem),
+        },
+      ]
+    );
+  };
+
+  // ✅ MÉTODO CORREGIDO: Procesar pago con Stripe real
+  const processStripePayment = async (packageItem) => {
+    try {
+      setIsProcessing(true);
+
+      // ✅ 1. Crear Payment Intent
+      const response = await fetch(`${API_URL}/create-payment-intent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: packageItem.price,
+          currency: 'mxn',
+          userId: currentUser.id,
+          packageId: packageItem.id,
+          packageName: packageItem.name,
+          coins: packageItem.coins
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      // 2. Configurar Payment Sheet de Stripe
+      const { error: initError } = await initPaymentSheet({
+        paymentIntentClientSecret: result.clientSecret,
+        merchantDisplayName: 'Maneki Casino',
+        returnURL: 'manekicasino://stripe-redirect',
+        style: 'automatic',
+        allowsDelayedPaymentMethods: false,
+      });
+
+      if (initError) {
+        throw new Error(`Error Stripe: ${initError.message}`);
+      }
+
+      // 3. Mostrar Payment Sheet
+      const { error: paymentError } = await presentPaymentSheet();
+
+      if (paymentError) {
+        if (paymentError.code === 'Canceled') {
+          showCancelAlert();
+        } else {
+          showErrorAlert(`No se pudo procesar el pago: ${paymentError.message}`);
+        }
+        setIsProcessing(false);
+        return;
+      }
+
+      // 4. ✅ PAGO EXITOSO - Confirmar en nuestro servidor
+      await confirmPayment(result.paymentIntentId, packageItem);
+
+    } catch (error) {
+      console.error('❌ Error en proceso de pago:', error);
+      showErrorAlert(`No se pudo completar la transacción: ${error.message}`);
+      setIsProcessing(false);
+    }
+  };
+
+  // ✅ MÉTODO CORREGIDO: Confirmar pago
+  const confirmPayment = async (paymentIntentId, packageItem) => {
+    try {
+      const response = await fetch(`${API_URL}/confirm-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          paymentIntentId: paymentIntentId,
+          userId: currentUser.id,
+          coins: packageItem.coins,
+          packageName: packageItem.name,
+          packageId: packageItem.id
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Agregar coins al contexto local
+        addCoins(packageItem.coins, `Compra de ${packageItem.name} via Stripe`);
+        showSuccessAlert(packageItem.coins, result.transactionId);
+      } else {
+        throw new Error(result.error || 'Error desconocido');
+      }
+    } catch (error) {
+      console.error('❌ Error confirmando pago:', error);
+      showErrorAlert(`Error al confirmar el pago: ${error.message}`);
+      setIsProcessing(false);
+    }
+  };
+
   const bestValueId = getBestValuePackage();
+
+  // Si está procesando, mostrar pantalla de carga
+  if (isProcessing) {
+    return (
+      <View style={styles.processingContainer}>
+        <View style={styles.processingCard}>
+          <ActivityIndicator size="large" color="#FFD700" />
+          <Text style={styles.processingTitle}>PROCESANDO PAGO</Text>
+          <Text style={styles.processingText}>
+            Estamos procesando tu transacción...
+          </Text>
+          <Text style={styles.processingSubtext}>
+            No cierres la aplicación
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -129,6 +316,22 @@ export default function BuyCoinsScreen({ navigation }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* ALERTA DE NO AUTENTICADO */}
+        {!currentUser && (
+          <View style={styles.authAlert}>
+            <Ionicons name="warning" size={20} color="#FFD700" />
+            <Text style={styles.authAlertText}>
+              Debes iniciar sesión para comprar coins
+            </Text>
+            <TouchableOpacity 
+              style={styles.loginButton}
+              onPress={() => navigation.navigate('Login')}
+            >
+              <Text style={styles.loginButtonText}>INICIAR SESIÓN</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* SALDO ACTUAL DEL USUARIO */}
         <View style={styles.balanceCard}>
           <View style={styles.balanceHeader}>
@@ -174,9 +377,11 @@ export default function BuyCoinsScreen({ navigation }) {
               selectedPackage === pkg.id && styles.packageSelected,
               pkg.popular && styles.popularPackage,
               pkg.id === bestValueId && styles.bestValuePackage,
+              (!currentUser) && styles.packageDisabled,
             ]}
             onPress={() => setSelectedPackage(pkg.id)}
             activeOpacity={0.7}
+            disabled={isProcessing || !currentUser}
           >
             {/* ETIQUETAS SUPERIORES */}
             <View style={styles.cardHeader}>
@@ -233,7 +438,7 @@ export default function BuyCoinsScreen({ navigation }) {
         ))}
 
         {/* RESUMEN DE COMPRA */}
-        {selectedPackage && (
+        {selectedPackage && currentUser && (
           <View style={styles.summaryCard}>
             <Text style={styles.summaryTitle}>RESUMEN DE COMPRA</Text>
             <View style={styles.summaryDetails}>
@@ -277,24 +482,27 @@ export default function BuyCoinsScreen({ navigation }) {
         )}
 
         {/* BOTÓN DE COMPRA */}
-        {selectedPackage && (
+        {selectedPackage && currentUser && (
           <TouchableOpacity
-            style={[styles.buyButton, isProcessing && styles.buyButtonDisabled]}
+            style={[
+              styles.buyButton, 
+              isProcessing && styles.buyButtonDisabled
+            ]}
             onPress={() =>
               handleBuyCoins(coinPackages.find((p) => p.id === selectedPackage))
             }
             disabled={isProcessing}
           >
             {isProcessing ? (
-              <View style={styles.processingContainer}>
+              <View style={styles.buttonProcessingContainer}>
                 <ActivityIndicator size="small" color="#000" />
-                <Text style={styles.processingText}>Procesando compra...</Text>
+                <Text style={styles.buttonProcessingText}>PROCESANDO...</Text>
               </View>
             ) : (
               <View style={styles.buyButtonContent}>
-                <Ionicons name="cart" size={20} color="#000" />
+                <Ionicons name="card" size={20} color="#000" />
                 <View style={styles.buyButtonTexts}>
-                  <Text style={styles.buyButtonText}>COMPRAR AHORA</Text>
+                  <Text style={styles.buyButtonText}>PAGAR CON STRIPE</Text>
                   <Text style={styles.buyButtonSubtext}>
                     $
                     {coinPackages
@@ -313,7 +521,7 @@ export default function BuyCoinsScreen({ navigation }) {
         <View style={styles.securitySection}>
           <View style={styles.securityHeader}>
             <Ionicons name="shield-checkmark" size={18} color="#32CD32" />
-            <Text style={styles.securityTitle}>Compra 100% Segura</Text>
+            <Text style={styles.securityTitle}>COMPRA 100% SEGURA</Text>
           </View>
           <View style={styles.securityFeatures}>
             <View style={styles.securityItem}>
@@ -344,7 +552,67 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 30,
   },
-  // Tarjeta de Saldo
+  authAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,215,0,0.1)',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FFD700',
+  },
+  authAlertText: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+    marginLeft: 10,
+  },
+  loginButton: {
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  loginButtonText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  processingContainer: {
+    flex: 1,
+    backgroundColor: "#0F0F0F",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  processingCard: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 20,
+    padding: 40,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#FFD700",
+  },
+  processingTitle: {
+    color: "#FFD700",
+    fontSize: 24,
+    fontWeight: "bold",
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  processingText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 5,
+  },
+  processingSubtext: {
+    color: "#999",
+    fontSize: 14,
+    textAlign: "center",
+  },
   balanceCard: {
     backgroundColor: "#1a1a1a",
     borderRadius: 15,
@@ -376,7 +644,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.8,
   },
-  // Banner Promocional
   promoBanner: {
     backgroundColor: "rgba(139, 0, 0, 0.3)",
     borderRadius: 15,
@@ -408,7 +675,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     opacity: 0.9,
   },
-  // Mejor Valor
   bestValueInfo: {
     flexDirection: "row",
     alignItems: "center",
@@ -426,7 +692,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
-  // Sección de Paquetes
   sectionTitle: {
     color: "#FFD700",
     fontSize: 20,
@@ -434,7 +699,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: "center",
   },
-  // Tarjetas de Paquetes
   packageCard: {
     backgroundColor: "#1a1a1a",
     borderRadius: 15,
@@ -452,6 +716,9 @@ const styles = StyleSheet.create({
   },
   bestValuePackage: {
     borderColor: "#FFD700",
+  },
+  packageDisabled: {
+    opacity: 0.5,
   },
   cardHeader: {
     flexDirection: "row",
@@ -539,7 +806,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#333",
   },
-  // Resumen de Compra
   summaryCard: {
     backgroundColor: "rgba(255, 215, 0, 0.1)",
     borderRadius: 15,
@@ -583,7 +849,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  // Botón de Compra
   buyButton: {
     backgroundColor: "#FFD700",
     borderRadius: 25,
@@ -591,7 +856,8 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   buyButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.6,
+    backgroundColor: "#666",
   },
   buyButtonContent: {
     flexDirection: "row",
@@ -614,18 +880,17 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     marginTop: 2,
   },
-  processingContainer: {
+  buttonProcessingContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
   },
-  processingText: {
+  buttonProcessingText: {
     color: "#000",
     fontSize: 16,
     fontWeight: "600",
   },
-  // Sección de Seguridad
   securitySection: {
     backgroundColor: "rgba(139, 0, 0, 0.2)",
     borderRadius: 15,
